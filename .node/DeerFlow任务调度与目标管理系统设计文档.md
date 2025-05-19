@@ -35,6 +35,7 @@
 
 ### 2.2 架构图
 
+
 ```
 +-------------------+     +---------------------+     +-------------------+
 |                   |     |                     |     |                   |
@@ -47,9 +48,16 @@
 |                   |     |                     |     |                   |
 |   爬虫服务        |<----+  扩展DeerFlow框架   |<----+   数据库服务     |
 |                   |     |                     |     |                   |
-+-------------------+     +---------------------+     +-------------------+
-                                    ^
-                                    |
++-------------------+     +----------+----------+     +-------------------+
+      ^                              |
+      |                              v
+      |                   +----------+----------+     +-------------------+
+      |                   |                     |     |                   |
+      +------------------>+   业务分析服务      +---->+  行业标准服务    |
+                          |                     |     |                   |
+                          +----------+----------+     +-------------------+
+                                     |
+                                     v
                           +---------+---------+
                           |                   |
                           |   Dify API服务    |
@@ -489,6 +497,283 @@ class EnhancedState(State):
 
 通过这种基于标准与合规要求的分解方法，系统能够为用户提供清晰、系统化的出口合规解决方案，确保所有必要的标准和要求都得到全面满足。
 
+#### 3.2.4 业务分析框架
+
+系统引入专门的业务分析模块，在目标分解前对用户的业务场景进行全面分析，提供更丰富的业务上下文以支持后续的目标和任务分解过程。业务分析框架围绕以下几个维度进行：
+
+1. **行业领域识别**：分析用户查询确定所属行业和特定业务场景
+2. **标准与法规分析**：识别相关行业标准和法规要求
+3. **业务约束评估**：确定业务实施中的关键约束条件
+4. **风险评估**：识别和评估相关业务风险
+5. **市场分析**：分析目标市场的特点和趋势
+6. **利益相关方分析**：识别关键利益相关方及其需求
+
+```python
+class BusinessAnalyzer:
+    """业务分析器节点，在目标分解前进行业务分析"""
+    
+    def __init__(self, db_service, dify_service, industry_standard_service):
+        self.db_service = db_service
+        self.dify_service = dify_service
+        self.industry_standard_service = industry_standard_service
+    
+    async def analyze(self, state: EnhancedState) -> Command:
+        """执行业务分析"""
+        # 获取用户查询
+        user_query = state.get("user_query", "")
+        objective_id = state.get("current_objective_id")
+        locale = state.get("locale", "zh-CN")
+        
+        # 1. 识别业务领域和场景
+        industry_info = await self._identify_industry(user_query)
+        
+        # 2. 检索行业标准和法规
+        standards = await self._get_industry_standards(industry_info["industry_type"])
+        
+        # 3. 分析业务约束和风险
+        business_constraints = await self._analyze_constraints(user_query, industry_info)
+        business_risks = await self._analyze_risks(user_query, industry_info, standards)
+        
+        # 4. 分析市场状况
+        market_analysis = await self._analyze_market(industry_info)
+        
+        # 5. 识别利益相关方
+        stakeholders = await self._identify_stakeholders(user_query, industry_info)
+        
+        # 6. 构建业务分析结果
+        analysis_result = {
+            "industry_type": industry_info["industry_type"],
+            "business_scenario": industry_info["business_scenario"],
+            "key_business_drivers": industry_info["key_drivers"],
+            "business_constraints": business_constraints,
+            "relevant_standards": standards,
+            "business_risks": business_risks,
+            "market_analysis": market_analysis,
+            "stakeholders": stakeholders
+        }
+        
+        # 7. 保存业务分析结果到数据库
+        analysis_id = await self.db_service.create_business_analysis({
+            "objective_id": objective_id,
+            "industry_type": industry_info["industry_type"],
+            "business_scenario": industry_info["business_scenario"],
+            "key_business_drivers": industry_info["key_drivers"],
+            "business_constraints": business_constraints,
+            "relevant_regulations": [s["standard_code"] for s in standards],
+            "market_requirements": market_analysis.get("market_trends", []),
+            "stakeholders": [s["name"] for s in stakeholders],
+            "business_risks": [r["risk_name"] for r in business_risks],
+            "analysis_result": json.dumps(analysis_result),
+            "created_at": datetime.now(),
+            "updated_at": datetime.now()
+        })
+        
+        # 8. 更新State
+        state.current_analysis_id = analysis_id
+        state.industry_type = industry_info["industry_type"]
+        state.business_scenario = industry_info["business_scenario"]
+        state.business_analysis_result = analysis_result
+        state.relevant_standards = standards
+        state.business_constraints = business_constraints
+        state.business_risks = business_risks
+        state.market_analysis = market_analysis
+        state.stakeholders = stakeholders
+        
+        # 9. 决定下一步行动
+        return Command(goto="objective_decomposer")
+    
+    async def _identify_industry(self, query: str) -> Dict:
+        """识别查询相关的行业和业务场景"""
+        # 使用LLM或规则引擎识别行业类型、业务场景和关键驱动因素
+        # 示例实现（实际应使用LLM或复杂规则引擎）
+        if "光伏" in query and "出口" in query:
+            if "法国" in query:
+                return {
+                    "industry_type": "photovoltaic",
+                    "business_scenario": "international_trade",
+                    "key_drivers": [
+                        "法国可再生能源扩展计划",
+                        "欧盟绿色能源战略",
+                        "碳减排目标",
+                        "能源独立性政策"
+                    ]
+                }
+            # 其他国家的分析...
+        
+        # 默认返回通用分析
+        return {
+            "industry_type": "unknown",
+            "business_scenario": "general",
+            "key_drivers": []
+        }
+    
+    async def _get_industry_standards(self, industry_type: str) -> List[Dict]:
+        """获取行业相关标准和法规"""
+        # 从行业标准服务获取标准信息
+        return await self.industry_standard_service.get_standards_by_industry(industry_type)
+    
+    async def _analyze_constraints(self, query: str, industry_info: Dict) -> List[str]:
+        """分析业务约束条件"""
+        # 识别和分析业务约束
+        constraints = []
+        
+        if industry_info["industry_type"] == "photovoltaic":
+            constraints = [
+                "产品需符合欧盟CE标志认证要求",
+                "需满足法国PPE2对光伏产品的碳足迹要求",
+                "需符合欧盟CBAM碳边境调节机制规定",
+                "产品包装和标签需符合法国标准",
+                "需满足法国本地化生产要求获得优惠政策"
+            ]
+        
+        return constraints
+    
+    async def _analyze_risks(self, query: str, industry_info: Dict, standards: List[Dict]) -> List[Dict]:
+        """分析业务风险"""
+        # 识别和评估业务风险
+        risks = []
+        
+        if industry_info["industry_type"] == "photovoltaic":
+            risks = [
+                {"risk_name": "碳足迹超标风险", "severity": "高", "mitigation": "优化生产工艺，降低碳排放"},
+                {"risk_name": "CBAM合规成本过高", "severity": "中", "mitigation": "提前规划碳减排，降低关税成本"},
+                {"risk_name": "未能满足法国招标要求", "severity": "高", "mitigation": "针对性改进产品设计和生产流程"},
+                {"risk_name": "认证流程延误", "severity": "中", "mitigation": "提前启动认证申请，预留缓冲时间"},
+                {"risk_name": "市场波动风险", "severity": "中", "mitigation": "多元化市场布局，降低单一市场依赖"}
+            ]
+        
+        return risks
+    
+    async def _analyze_market(self, industry_info: Dict) -> Dict:
+        """分析市场情况"""
+        # 分析目标市场状况
+        if industry_info["industry_type"] == "photovoltaic" and industry_info["business_scenario"] == "international_trade":
+            return {
+                "market_size": "法国光伏市场年增长率约15-20%",
+                "price_sensitivity": "中高",
+                "competition_level": "高",
+                "entry_barriers": "监管要求复杂",
+                "market_trends": [
+                    "更严格的环保要求",
+                    "本地化生产优势增强",
+                    "双面组件需求增长",
+                    "集中式向分布式转变"
+                ]
+            }
+        
+        return {"market_size": "未知", "market_trends": []}
+    
+    async def _identify_stakeholders(self, query: str, industry_info: Dict) -> List[Dict]:
+        """识别利益相关方"""
+        # 识别关键利益相关方及其需求
+        if industry_info["industry_type"] == "photovoltaic" and industry_info["business_scenario"] == "international_trade":
+            return [
+                {"name": "法国能源监管委员会", "role": "监管机构", "requirements": ["合规认证", "碳足迹声明"]},
+                {"name": "欧盟碳边境调节机制管理局", "role": "监管机构", "requirements": ["CBAM申报", "碳排放证明"]},
+                {"name": "法国光伏行业协会", "role": "行业组织", "requirements": ["行业标准符合", "最佳实践采用"]},
+                {"name": "终端用户/投标方", "role": "客户", "requirements": ["成本效益", "性能保证", "环保证明"]},
+                {"name": "认证机构", "role": "第三方", "requirements": ["技术规范符合", "生产流程审核"]}
+            ]
+        
+        return []
+```
+
+**光伏组件出口法国业务分析示例**：
+
+以下是系统对"光伏组件出口法国需要完成哪些合规目标"查询的业务分析结果示例：
+
+```json
+{
+  "industry_type": "photovoltaic",
+  "business_scenario": "international_trade",
+  "key_business_drivers": [
+    "法国可再生能源扩展计划",
+    "欧盟绿色能源战略",
+    "碳减排目标",
+    "能源独立性政策"
+  ],
+  "business_constraints": [
+    "产品需符合欧盟CE标志认证要求",
+    "需满足法国PPE2对光伏产品的碳足迹要求",
+    "需符合欧盟CBAM碳边境调节机制规定",
+    "产品包装和标签需符合法国标准",
+    "需满足法国本地化生产要求获得优惠政策"
+  ],
+  "relevant_standards": [
+    {
+      "standard_id": "std-001",
+      "standard_name": "法国PPE2多年能源计划",
+      "standard_code": "PPE2-2019",
+      "issuing_authority": "法国生态转型部",
+      "regions": ["法国"],
+      "categories": ["光伏产品", "碳足迹"]
+    },
+    {
+      "standard_id": "std-002",
+      "standard_name": "欧盟碳边境调节机制",
+      "standard_code": "CBAM-2021",
+      "issuing_authority": "欧盟委员会",
+      "regions": ["欧盟", "法国"],
+      "categories": ["碳排放", "进口关税"]
+    },
+    {
+      "standard_id": "std-003",
+      "standard_name": "欧盟光伏产品生态设计指令",
+      "standard_code": "ECO-PV-2020",
+      "issuing_authority": "欧盟标准化委员会",
+      "regions": ["欧盟", "法国"],
+      "categories": ["光伏产品", "环保设计"]
+    }
+  ],
+  "business_risks": [
+    {
+      "risk_name": "碳足迹超标风险",
+      "severity": "高",
+      "mitigation": "优化生产工艺，降低碳排放"
+    },
+    {
+      "risk_name": "CBAM合规成本过高",
+      "severity": "中",
+      "mitigation": "提前规划碳减排，降低关税成本"
+    },
+    {
+      "risk_name": "未能满足法国招标要求",
+      "severity": "高",
+      "mitigation": "针对性改进产品设计和生产流程"
+    }
+  ],
+  "market_analysis": {
+    "market_size": "法国光伏市场年增长率约15-20%",
+    "price_sensitivity": "中高",
+    "competition_level": "高",
+    "entry_barriers": "监管要求复杂",
+    "market_trends": [
+      "更严格的环保要求",
+      "本地化生产优势增强",
+      "双面组件需求增长",
+      "集中式向分布式转变"
+    ]
+  },
+  "stakeholders": [
+    {
+      "name": "法国能源监管委员会",
+      "role": "监管机构",
+      "requirements": ["合规认证", "碳足迹声明"]
+    },
+    {
+      "name": "欧盟碳边境调节机制管理局",
+      "role": "监管机构",
+      "requirements": ["CBAM申报", "碳排放证明"]
+    },
+    {
+      "name": "法国光伏行业协会",
+      "role": "行业组织",
+      "requirements": ["行业标准符合", "最佳实践采用"]
+    }
+  ]
+}
+```
+
 ### 3.3 任务管理服务设计
 
 #### 3.3.1 主要组件
@@ -523,7 +808,14 @@ class EnhancedState(State):
 ```mermaid
 flowchart TD
     A[用户提交合规问题] --> B[创建新Objective记录]
-    B --> C[获取Dify知识库内容]
+    B --> BA[Business Analyzer业务分析]
+    BA --> BA1[识别业务领域]
+    BA --> BA2[分析行业标准]
+    BA --> BA3[评估业务约束]
+    BA --> BA4[识别业务风险]
+    BA --> BA5[生成业务分析报告]
+    
+    BA --> C[获取Dify知识库内容]
     C --> D[Task Decomposer分析问题]
     
     D -->|上下文充分| E[直接生成答案]
@@ -568,8 +860,21 @@ flowchart TD
 
 **详细流程说明**：
 
-1. **目标分析阶段**
-   - Task Decomposer节点分析用户的合规问题和可用上下文
+1. **业务分析阶段**
+   - 用户提交合规问题后，首先创建新的Objective记录
+   - Business Analyzer节点对用户查询进行全面业务分析：
+     ```
+     a. 识别行业领域和业务场景（如"光伏行业"、"国际贸易"）
+     b. 检索相关行业标准和法规要求（如PPE2、CBAM等）
+     c. 评估业务约束条件（如产品认证要求、法规限制等）
+     d. 识别关键业务风险（如碳足迹超标风险、认证延误风险等）
+     e. 分析目标市场特点（如法国光伏市场规模、趋势等）
+     f. 识别关键利益相关方（如监管机构、客户等）
+     ```
+   - 生成完整的业务分析报告，保存到数据库并继续流程
+
+2. **目标分析阶段**
+   - 结合业务分析结果，Task Decomposer节点分析用户的合规问题和可用上下文
    - 应用严格的上下文充分性标准（借鉴DeerFlow方法）：
      ```
      a. 如当前信息完全回答了所有合规要求
@@ -584,7 +889,7 @@ flowchart TD
      - 设置任务优先级，基于法规重要性与时间紧迫度
      - 保存Task记录，状态设为PENDING
 
-2. **标准任务分解阶段**
+3. **标准任务分解阶段**
    - 对每个标准任务，获取相关Dify知识库内容补充上下文
    - Task Analyzer节点将标准任务分解为具体执行步骤：
      ```
@@ -596,7 +901,7 @@ flowchart TD
    - 保存Step记录，状态设为PENDING
    - 将Task状态更新为IN_PROGRESS
 
-3. **步骤执行阶段**
+4. **步骤执行阶段**
    - Scheduler优先调度资料收集类步骤，建立知识基础
    - 对每个Step：
      ```
@@ -610,7 +915,7 @@ flowchart TD
      ```
    - 当所有步骤完成后，评估标准任务是否达成
 
-4. **合规方案生成阶段**
+5. **合规方案生成阶段**
    - 当所有标准任务完成后，系统整合各任务的执行结果
    - 生成完整的合规解决方案，包括：
      ```
@@ -726,9 +1031,298 @@ class WebCrawlerService:
         pass
 ```
 
-### 3.6 调度机制设计
+### 3.6 行业标准服务设计
 
-#### 3.6.1 调度器实现
+#### 3.6.1 主要接口
+
+1. **行业标准检索接口**
+   - 功能：按行业、地区或关键词检索标准
+   - 输入：行业类型、地区、关键词等
+   - 输出：标准列表及其详细信息
+
+2. **标准更新监控接口**
+   - 功能：监控标准更新并通知系统
+   - 输入：监控配置
+   - 输出：更新通知和变更摘要
+
+#### 3.6.2 实现类
+
+```python
+class IndustryStandardService:
+    """行业标准服务，提供各行业标准和法规信息"""
+    
+    def __init__(self, db_service, web_crawler_service=None):
+        self.db_service = db_service
+        self.web_crawler_service = web_crawler_service
+    
+    async def get_standards_by_industry(self, industry_type: str) -> List[Dict]:
+        """根据行业类型获取相关标准"""
+        # 从数据库获取行业标准
+        standards = await self.db_service.query(
+            "SELECT * FROM industry_standards WHERE industry_type = %s",
+            (industry_type,)
+        )
+        
+        # 处理查询结果
+        result = []
+        for std in standards:
+            result.append({
+                "standard_id": std["standard_id"],
+                "standard_name": std["standard_name"],
+                "standard_code": std["standard_code"],
+                "description": std["description"],
+                "issuing_authority": std["issuing_authority"],
+                "effective_date": std["effective_date"],
+                "expiration_date": std["expiration_date"],
+                "regions": std["regions"],
+                "categories": std["categories"]
+            })
+        
+        return result
+    
+    async def get_standards_by_region(self, region: str) -> List[Dict]:
+        """根据地区获取相关标准"""
+        # 从数据库获取特定地区的标准
+        standards = await self.db_service.query(
+            "SELECT * FROM industry_standards WHERE %s = ANY(regions)",
+            (region,)
+        )
+        
+        # 处理查询结果
+        result = []
+        for std in standards:
+            result.append({
+                "standard_id": std["standard_id"],
+                "standard_name": std["standard_name"],
+                "standard_code": std["standard_code"],
+                "description": std["description"],
+                "issuing_authority": std["issuing_authority"],
+                "effective_date": std["effective_date"],
+                "expiration_date": std["expiration_date"],
+                "regions": std["regions"],
+                "categories": std["categories"]
+            })
+        
+        return result
+    
+    async def get_standard_details(self, standard_id: str) -> Dict:
+        """获取标准详情"""
+        # 获取标准的详细信息
+        std = await self.db_service.query_one(
+            "SELECT * FROM industry_standards WHERE standard_id = %s",
+            (standard_id,)
+        )
+        
+        if not std:
+            raise ValueError(f"Standard with ID {standard_id} not found")
+        
+        return {
+            "standard_id": std["standard_id"],
+            "standard_name": std["standard_name"],
+            "standard_code": std["standard_code"],
+            "description": std["description"],
+            "issuing_authority": std["issuing_authority"],
+            "effective_date": std["effective_date"],
+            "expiration_date": std["expiration_date"],
+            "regions": std["regions"],
+            "categories": std["categories"],
+            "metadata": std["metadata"]
+        }
+    
+    async def update_standard(self, standard_data: Dict) -> bool:
+        """更新标准信息"""
+        # 更新标准信息
+        result = await self.db_service.execute(
+            """
+            UPDATE industry_standards 
+            SET standard_name = %(standard_name)s,
+                standard_code = %(standard_code)s,
+                description = %(description)s,
+                issuing_authority = %(issuing_authority)s,
+                effective_date = %(effective_date)s,
+                expiration_date = %(expiration_date)s,
+                regions = %(regions)s,
+                categories = %(categories)s,
+                metadata = %(metadata)s,
+                updated_at = NOW()
+            WHERE standard_id = %(standard_id)s
+            """,
+            standard_data
+        )
+        
+        return result.rowcount > 0
+    
+    async def add_standard(self, standard_data: Dict) -> str:
+        """添加新标准"""
+        # 添加新标准到数据库
+        standard_id = str(uuid.uuid4())
+        await self.db_service.execute(
+            """
+            INSERT INTO industry_standards (
+                standard_id, industry_type, standard_name, standard_code,
+                description, issuing_authority, effective_date,
+                expiration_date, regions, categories, metadata,
+                created_at, updated_at
+            ) VALUES (
+                %(standard_id)s, %(industry_type)s, %(standard_name)s, %(standard_code)s,
+                %(description)s, %(issuing_authority)s, %(effective_date)s,
+                %(expiration_date)s, %(regions)s, %(categories)s, %(metadata)s,
+                NOW(), NOW()
+            )
+            """,
+            {**standard_data, "standard_id": standard_id}
+        )
+        
+        return standard_id
+    
+    async def search_standards(self, keywords: str) -> List[Dict]:
+        """按关键词搜索标准"""
+        # 使用全文搜索功能
+        standards = await self.db_service.query(
+            """
+            SELECT * FROM industry_standards 
+            WHERE to_tsvector('english', standard_name || ' ' || description) @@ plainto_tsquery('english', %s)
+            """,
+            (keywords,)
+        )
+        
+        # 处理查询结果
+        result = []
+        for std in standards:
+            result.append({
+                "standard_id": std["standard_id"],
+                "standard_name": std["standard_name"],
+                "standard_code": std["standard_code"],
+                "description": std["description"],
+                "issuing_authority": std["issuing_authority"],
+                "regions": std["regions"],
+                "categories": std["categories"]
+            })
+        
+        return result
+    
+    async def monitor_standard_updates(self) -> List[Dict]:
+        """检查标准更新情况"""
+        # 如果配置了爬虫服务，使用它获取最新更新
+        if self.web_crawler_service:
+            # 获取需要监控的标准机构网站
+            sources = await self.db_service.query(
+                """
+                SELECT DISTINCT issuing_authority FROM industry_standards
+                """
+            )
+            
+            updates = []
+            for source in sources:
+                authority = source["issuing_authority"]
+                # 使用爬虫服务检查更新
+                try:
+                    update_info = await self.web_crawler_service.search_and_crawl(
+                        f"{authority} latest standards update",
+                        limit=3
+                    )
+                    
+                    # 分析更新信息
+                    for info in update_info:
+                        updates.append({
+                            "authority": authority,
+                            "title": info["title"],
+                            "url": info["url"],
+                            "summary": info["content"][:200] + "...",
+                            "timestamp": info["timestamp"]
+                        })
+                except Exception as e:
+                    logger.error(f"Error checking updates for {authority}: {str(e)}")
+            
+            return updates
+        
+        return []
+    
+    async def initialize_photovoltaic_standards(self):
+        """初始化光伏行业标准数据"""
+        # 为系统预加载基本的光伏行业标准
+        photovoltaic_standards = [
+            {
+                "industry_type": "photovoltaic",
+                "standard_name": "法国PPE2多年能源计划",
+                "standard_code": "PPE2-2019",
+                "description": "法国多年能源计划(PPE2)规定了光伏产品的碳足迹要求，对于参与法国光伏招标项目的产品具有约束力。",
+                "issuing_authority": "法国生态转型部",
+                "effective_date": "2019-04-23",
+                "expiration_date": None,
+                "regions": ["法国"],
+                "categories": ["光伏产品", "碳足迹"],
+                "metadata": json.dumps({
+                    "carbon_footprint_threshold": "550 kg CO2eq/kWp",
+                    "calculation_method": "ECS方法",
+                    "verification_requirement": "需第三方验证"
+                })
+            },
+            {
+                "industry_type": "photovoltaic",
+                "standard_name": "欧盟碳边境调节机制",
+                "standard_code": "CBAM-2021",
+                "description": "欧盟碳边境调节机制(CBAM)要求进口商申报碳排放量并购买对应的CBAM证书。",
+                "issuing_authority": "欧盟委员会",
+                "effective_date": "2021-07-14",
+                "expiration_date": None,
+                "regions": ["欧盟", "法国"],
+                "categories": ["碳排放", "进口关税"],
+                "metadata": json.dumps({
+                    "transition_period": "2023-2025",
+                    "full_implementation": "2026年起",
+                    "covered_products": ["铝", "水泥", "电力", "肥料", "钢铁", "氢气", "部分有机化学品"]
+                })
+            },
+            {
+                "industry_type": "photovoltaic",
+                "standard_name": "欧盟光伏产品生态设计指令",
+                "standard_code": "ECO-PV-2020",
+                "description": "规定了光伏产品的生态设计要求，包括能效、材料使用和产品寿命等方面。",
+                "issuing_authority": "欧盟标准化委员会",
+                "effective_date": "2020-11-01",
+                "expiration_date": None,
+                "regions": ["欧盟", "法国"],
+                "categories": ["光伏产品", "环保设计"],
+                "metadata": json.dumps({
+                    "efficiency_requirement": "最低转换效率要求",
+                    "durability_standard": "最少25年设计寿命",
+                    "recyclability": "至少70%可回收率"
+                })
+            }
+        ]
+        
+        # 插入标准数据
+        for std in photovoltaic_standards:
+            try:
+                # 检查是否已存在
+                existing = await self.db_service.query_one(
+                    "SELECT standard_id FROM industry_standards WHERE standard_code = %s",
+                    (std["standard_code"],)
+                )
+                
+                if not existing:
+                    await self.add_standard(std)
+            except Exception as e:
+                logger.error(f"Error initializing standard {std['standard_code']}: {str(e)}")
+```
+
+#### 3.6.3 光伏行业专业标准集
+
+系统针对光伏行业预定义了一套专业标准集，作为业务分析和合规要求识别的基础。下表为部分关键标准示例：
+
+| 标准编号 | 标准名称 | 发布机构 | 地区 | 关键要求 |
+|---------|---------|---------|------|---------|
+| PPE2-2019 | 法国多年能源计划 | 法国生态转型部 | 法国 | 碳足迹不超过550 kg CO2eq/kWp |
+| CBAM-2021 | 欧盟碳边境调节机制 | 欧盟委员会 | 欧盟 | 申报产品碳排放并购买CBAM证书 |
+| ECO-PV-2020 | 欧盟光伏产品生态设计指令 | 欧盟标准化委员会 | 欧盟 | 最低转换效率、25年设计寿命、70%可回收率 |
+| IEC 61215 | 光伏组件设计资格认证和定型认证 | 国际电工委员会 | 全球 | 组件可靠性和耐久性测试标准 |
+| IEC 61730 | 光伏组件安全认证 | 国际电工委员会 | 全球 | 电气安全和机械安全要求 |
+| ENS DC 2021 | 法国国家电网标准 | 法国电网公司 | 法国 | 并网技术要求和电网兼容性 |
+
+### 3.7 调度机制设计
+
+#### 3.7.1 调度器实现
 
 ```python
 class ObjectiveScheduler:
@@ -934,6 +1528,21 @@ class ObjectiveScheduler:
    - `POST /api/schedules/retry/{schedule_id}`：手动触发重试
    - `GET /api/schedules/task/{task_id}`：获取任务的调度历史
 
+5. **业务分析API**
+   - `GET /api/business-analyses/{analysis_id}`：获取业务分析详情
+   - `GET /api/objectives/{objective_id}/business-analysis`：获取目标关联的业务分析
+   - `POST /api/business-analyses/analyze`：提交新的业务分析请求
+   - `GET /api/business-analyses/industries`：获取支持的行业列表
+   - `GET /api/business-analyses/scenarios`：获取支持的业务场景列表
+
+6. **行业标准API**
+   - `GET /api/industry-standards`：查询行业标准列表
+   - `GET /api/industry-standards/{standard_id}`：获取标准详情
+   - `GET /api/industry-standards/search`：搜索标准
+   - `GET /api/industry-standards/updates`：获取标准更新信息
+   - `POST /api/industry-standards`：添加新标准（管理员权限）
+   - `PUT /api/industry-standards/{standard_id}`：更新标准信息（管理员权限）
+
 #### 3.7.2 WebSocket API
 
 1. **实时状态更新**
@@ -948,28 +1557,38 @@ class ObjectiveScheduler:
    - 实现任务、目标、步骤的数据模型及关系
    - 集成Dify API服务，建立知识库接口
    - 实现基于合规标准的数据字典和枚举值
+   - 创建业务分析和行业标准的数据模型
 
-2. **阶段二：标准与合规分解框架（第3-4周）**
+2. **阶段二：业务分析与标准框架（第3-4周）**
+   - 实现行业标准服务，构建标准数据库
+   - 开发业务分析模块，实现行业识别和标准检索
+   - 开发光伏行业专业分析组件
+   - 实现业务风险评估和约束分析功能
+   - 构建行业标准更新监控机制
+
+3. **阶段三：标准与合规分解框架（第5-6周）**
    - 扩展DeerFlow框架，实现标准识别与目标分解逻辑
    - 开发Task Decomposer节点，优化合规标准目标识别算法
    - 开发Task Analyzer节点，实现步骤设计模式
    - 构建标准化的步骤模板库（资料收集、核算计算等）
+   - 将业务分析结果集成到目标分解过程
 
-3. **阶段三：合规信息收集系统（第5-6周）**
+4. **阶段四：合规信息收集系统（第7-8周）**
    - 实现针对法规和标准的智能网络爬虫服务
    - 开发专业领域知识库扩展系统
    - 实现法规更新监测机制
    - 建立合规资料充分性评估系统，基于完整性和时效性
 
-4. **阶段四：合规文档生成与调度（第7-8周）**
+5. **阶段五：合规文档生成与调度（第9-10周）**
    - 实现基于收集资料的合规文档生成系统
    - 开发合规认证申请流程自动化组件
    - 实现优先级基于合规时效性的调度算法
    - 开发异常处理和法规变更应对机制
 
-5. **阶段五：UI和验证（第9-10周）**
+6. **阶段六：UI和验证（第11-12周）**
    - 开发合规查询与管理Web界面
    - 实现合规目标与进度可视化系统
+   - 实现业务分析报告可视化组件
    - 构建基于典型国际贸易合规案例的系统验证
    - 性能优化和系统稳定性测试
 
@@ -981,6 +1600,7 @@ class ObjectiveScheduler:
    - 数据库：PostgreSQL
    - ORM：SQLAlchemy
    - 任务队列：Celery + Redis
+   - 工作流：LangGraph
    - 合规数据API集成：RESTful + GraphQL
 
 2. **前端**
