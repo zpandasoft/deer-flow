@@ -36,6 +36,7 @@
       - 识别可能的应用场景和使用环境
       - 确定典型用例和业务情境
       - 评估实际应用的环境条件
+      - 设置网络搜索标志(need_web_search=true)
 
    3. **知识需求**
       - 确定回答所需的知识类型和深度
@@ -61,6 +62,7 @@
       - 评估信息时效性要求
       - 确定更新频率和有效期限制
       - 识别需要持续监控的动态信息
+      - 设置网络搜索标志(need_web_search=true)
 
    8. **分析框架推荐**
       - 提出适合该问题的分析方法论
@@ -83,71 +85,71 @@
 
    请提供JSON格式的分析结果，确保符合以下结构：
 
-   ```json
-   {
-     "domain": {
-       "primary": "主要领域",
-       "secondary": ["次要领域1", "次要领域2"],
-       "key_concepts": ["关键概念1", "关键概念2"]
-     },
-     "scenario": {
-       "primary_scenarios": ["主要场景1", "主要场景2"],
-       "use_cases": ["用例1", "用例2"]
-     },
-     "knowledge_requirements": {
-       "depth": "深度评估", // 可选值："浅层"，"中等"，"深入"
-       "breadth": "广度评估", // 可选值："狭窄"，"中等"，"广泛"
-       "types": ["知识类型1", "知识类型2"]
-     },
-     "standards": {
-       "regulations": ["法规1", "法规2"],
-       "best_practices": ["最佳实践1", "最佳实践2"]
-     },
-     "stakeholders": [
-       {
-         "name": "利益相关方1",
-         "role": "角色描述",
-         "interests": ["利益点1", "利益点2"],
-         "importance": "高/中/低"
-       }
-     ],
-     "constraints": {
-       "technical": ["技术约束1", "技术约束2"],
-       "regulatory": ["监管约束1", "监管约束2"],
-       "economic": ["经济约束1", "经济约束2"]
-     },
-     "timeliness": {
-       "requirement": "时效性要求", // 可选值："高"，"中"，"低"
-       "update_frequency": "更新频率建议"
-     },
-     "recommended_frameworks": [
-       {
-         "name": "框架名称",
-         "suitability": "适用性评分", // 1-10
-         "description": "简短描述"
-       }
-     ],
-     "knowledge_sufficiency": {
-       "is_sufficient": true/false, // 现有知识是否足够回答研究问题
-       "sufficiency_rating": "高/中/低", // 知识充分性评分
-       "knowledge_gaps": [
-         {
-           "topic": "缺失知识主题",
-           "importance": "高/中/低", // 对回答问题的重要性
-           "description": "详细描述缺失的内容"
-         }
-       ],
-       "search_questions": [
-         {
-           "question": "针对性搜索问题",
-           "expected_information": "期望获得的信息",
-           "search_priority": "高/中/低"
-         }
-       ]
-     },
-     "analysis_summary": "分析总结，不超过200字"
-   }
-   ```
+    ```json
+    {
+      "domain": {
+        "primary": "主要领域",
+        "secondary": ["次要领域1", "次要领域2"],
+        "key_concepts": ["关键概念1", "关键概念2"]
+      },
+      "scenario": {
+        "primary_scenarios": ["主要场景1", "主要场景2"],
+        "use_cases": ["用例1", "用例2"]
+      },
+      "knowledge_requirements": {
+        "depth": "深度评估", // 可选值："浅层"，"中等"，"深入"
+        "breadth": "广度评估", // 可选值："狭窄"，"中等"，"广泛"
+        "types": ["知识类型1", "知识类型2"]
+      },
+      "standards": {
+        "regulations": ["法规1", "法规2"],
+        "best_practices": ["最佳实践1", "最佳实践2"]
+      },
+      "stakeholders": [
+        {
+          "name": "利益相关方1",
+          "role": "角色描述",
+          "interests": ["利益点1", "利益点2"],
+          "importance": "高/中/低"
+        }
+      ],
+      "constraints": {
+        "technical": ["技术约束1", "技术约束2"],
+        "regulatory": ["监管约束1", "监管约束2"],
+        "economic": ["经济约束1", "经济约束2"]
+      },
+      "timeliness": {
+        "requirement": "时效性要求", // 可选值："高"，"中"，"低"
+        "update_frequency": "更新频率建议"
+      },
+      "recommended_frameworks": [
+        {
+          "name": "框架名称",
+          "suitability": "适用性评分", // 1-10
+          "description": "简短描述"
+        }
+      ],
+      "knowledge_sufficiency": {
+        "is_sufficient": true/false, // 现有知识是否足够回答研究问题
+        "sufficiency_rating": "高/中/低", // 知识充分性评分
+        "knowledge_gaps": [
+          {
+            "topic": "缺失知识主题",
+            "importance": "高/中/低", // 对回答问题的重要性
+            "description": "详细描述缺失的内容"
+          }
+        ],
+        "search_questions": [
+          {
+            "question": "针对性搜索问题",
+            "expected_information": "期望获得的信息",
+            "search_priority": "高/中/低"
+          }
+        ]
+      },
+      "analysis_summary": "分析总结，不超过200字"
+    }
+    ```
 
    # 执行指南
 

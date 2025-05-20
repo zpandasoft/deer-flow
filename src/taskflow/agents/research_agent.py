@@ -70,9 +70,32 @@ class ResearchAgent(LLMAgent[Dict[str, Any], Dict[str, Any]]):
         """
         获取默认系统提示词。
         
+        注意：此方法仅作为备用，通常应通过get_agent_by_name函数获取智能体实例，
+        该函数会自动从/src/prompts/目录加载提示词。
+        
         Returns:
             默认系统提示词
         """
+        # 尝试从/src/prompts/目录加载
+        try:
+            from src.taskflow.prompts import load_prompt_from_file
+            
+            prompt_paths = [
+                "src/prompts/research_agent.md",
+                "src/prompts/researcher.md",
+                "src/prompts/researcher.zh-CN.md"
+            ]
+            
+            for path in prompt_paths:
+                prompt = load_prompt_from_file(path)
+                if prompt:
+                    logger.info(f"已从{path}加载提示词")
+                    return prompt
+        except Exception as e:
+            logger.warning(f"无法从文件加载提示词: {str(e)}")
+        
+        # 如果无法从文件加载，使用内置提示词
+        logger.warning("使用内置的默认研究智能体提示词")
         return """
         你是一个专业的研究智能体，负责执行信息收集和研究任务。
 

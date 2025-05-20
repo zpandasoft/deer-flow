@@ -26,6 +26,7 @@ from src.taskflow.graph.types import (
     ObjectiveState, ObjectiveStatus, TaskState, TaskStatus, TaskItemState,
     StepState, StepStatus, TaskType, QualityLevel
 )
+from src.taskflow.prompts import apply_prompt_template
 
 
 # 获取日志记录器
@@ -56,6 +57,26 @@ async def context_analyzer_node(state: TaskState) -> TaskState:
         # 记录节点访问
         state.mark_node_visited("context_analyzer")
         
+        # 使用模板系统生成提示词
+        messages = apply_prompt_template("context_analyzer", {
+            "objective": {
+                "query": state.objective.query,
+                "objective_id": state.objective.objective_id,
+            },
+            "intermediate_data": {
+                "language": state.intermediate_data.get("language", "zh"),
+                "available_knowledge": "",
+            },
+            "metadata": state.objective.metadata
+        })
+        
+        # 提取系统提示词和用户消息
+        system_prompt = messages[0]["content"]
+        
+        # 更新智能体的系统提示词
+        if agent.system_prompt != system_prompt:
+            agent.system_prompt = system_prompt
+        
         # 设置智能体输入
         agent_input = {
             "query": state.objective.query,
@@ -70,8 +91,8 @@ async def context_analyzer_node(state: TaskState) -> TaskState:
         # 更新状态
         state.intermediate_data["context_analysis"] = result
         state.add_message(
-            f"上下文分析完成。识别到研究领域: {result.get('domain', '未知')}，"
-            f"关键概念: {', '.join(result.get('key_concepts', ['未知']))}",
+            f"上下文分析完成。识别到研究领域: {result.get('domain', {}).get('primary', '未知')}，"
+            f"关键概念: {', '.join(result.get('domain', {}).get('key_concepts', ['未知']))}",
             role="system"
         )
         
