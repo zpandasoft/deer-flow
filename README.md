@@ -553,3 +553,103 @@ Your unwavering commitment and expertise have been the driving force behind Deer
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=bytedance/deer-flow&type=Date)](https://star-history.com/#bytedance/deer-flow&Date)
+
+# DeerFlow 多智能体系统
+
+DeerFlow 是一个多智能体任务调度与目标管理系统，提供强大的流式处理能力和灵活的智能体协作框架。
+
+## 系统简介
+
+DeerFlow 使用多智能体架构来分解、规划和执行复杂任务。系统通过流式API接口提供实时的处理进度反馈，允许用户在任务执行过程中进行干预和交互。
+
+## 快速开始
+
+### 安装依赖
+
+```bash
+pip install fastapi uvicorn aiohttp pydantic
+```
+
+### 启动多智能体服务
+
+```bash
+python simple_multiagent_server.py
+```
+
+服务将在 http://localhost:8000 上运行，提供以下API端点：
+
+- `POST /api/v1/multiagent/stream` - 多智能体流式处理接口
+
+### 测试多智能体流式接口
+
+```bash
+python test_multiagent_stream.py "你的查询内容"
+```
+
+如不提供查询内容，将使用默认查询："光伏组件出口法国需要完成哪些合规目标"
+
+## API 说明
+
+### 多智能体流式 API
+
+**端点**: `/api/v1/multiagent/stream`
+
+**方法**: POST
+
+**请求体**:
+```json
+{
+  "query": "用户查询内容",
+  "thread_id": "__default__",  // 可选，默认创建新会话
+  "locale": "zh-CN",           // 可选，默认中文
+  "max_steps": 10,             // 可选，最大步骤数
+  "auto_execute": false,       // 可选，是否自动执行
+  "interrupt_feedback": null   // 可选，中断反馈
+}
+```
+
+**响应**: 
+- 内容类型: `text/event-stream`
+- 格式: Server-Sent Events (SSE)
+
+**事件类型**:
+1. `message_chunk` - 消息片段
+2. `interrupt` - 中断事件，用于用户交互
+3. `error` - 错误事件
+
+**事件数据示例**:
+```
+event: message_chunk
+data: {"thread_id":"123","id":"msg_1","agent":"context_analyzer","role":"assistant","content":"分析中..."}
+
+event: interrupt
+data: {"thread_id":"123","id":"int_1","agent":"task_analyzer","role":"assistant","content":"是否继续?","options":[{"text":"继续","value":"accepted"}]}
+```
+
+## 系统架构
+
+DeerFlow 的核心组件包括：
+
+1. **多智能体协作框架** - 负责智能体的注册、调度和通信
+2. **任务图构建器** - 将任务分解为细粒度步骤
+3. **流式处理引擎** - 支持实时数据流和状态更新
+4. **智能体实现** - 各类专精不同任务的智能体
+
+## 智能体类型
+
+系统包含以下智能体：
+
+- **Context Analyzer** - 上下文分析，理解用户需求
+- **Objective Decomposer** - 目标分解，拆分复杂问题
+- **Task Analyzer** - 任务分析，规划执行步骤
+- **Research** - 研究智能体，收集相关信息
+- **Processing** - 处理智能体，执行具体任务
+- **Synthesis** - 综合智能体，整合结果并生成最终回答
+
+## 后续开发计划
+
+1. 完整实现后端数据库存储
+2. 添加用户认证和权限管理
+3. 支持更多类型的智能体
+4. 提供可视化任务监控界面
+5. 实现智能体的自主学习和优化

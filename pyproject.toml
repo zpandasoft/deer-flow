@@ -32,6 +32,17 @@ dependencies = [
     "arxiv>=2.2.0",
     "mcp>=1.6.0",
     "langchain-mcp-adapters>=0.0.9",
+    # 任务调度与目标管理系统依赖
+    "sqlalchemy>=2.0.38",
+    "pymysql>=1.1.0",
+    "cryptography>=42.0.0",  # MySQL连接加密
+    "pydantic>=2.5.0",
+    "alembic>=1.13.0",  # 数据库迁移
+    "tenacity>=8.2.3",  # 重试机制
+    "python-json-logger>=2.0.7",  # JSON格式日志
+    "asyncio>=3.4.3",
+    "aiohttp>=3.9.0",
+    "psutil>=5.9.8",  # 系统资源监控
 ]
 
 [project.optional-dependencies]
@@ -41,6 +52,7 @@ dev = [
 test = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.23.5",  # 异步测试支持
 ]
 
 [tool.pytest.ini_options]
