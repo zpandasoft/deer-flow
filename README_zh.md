@@ -549,3 +549,9 @@ DeerFlow 建立在开源社区的杰出工作基础之上。我们深深感谢�
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=bytedance/deer-flow&type=Date)](https://star-history.com/#bytedance/deer-flow&Date)
+
+
+python taskflow_api.py --port 8001
+python server.py --port 8001
+
+python test_multiagent_stream.py --auto-execute

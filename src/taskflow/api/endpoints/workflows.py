@@ -10,7 +10,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from src.taskflow.api.deps import get_db, get_workflow_svc
+from src.taskflow.api.deps import get_db, get_workflow_svc, WorkflowService
 from src.taskflow.api.schemas import (
     WorkflowState,
     CheckpointSummary,
@@ -18,7 +18,6 @@ from src.taskflow.api.schemas import (
 )
 from src.taskflow.db.service import DatabaseService
 from src.taskflow.exceptions import WorkflowNotFoundError, WorkflowStateError
-from src.taskflow.graph.builder import WorkflowService
 
 # 创建路由器
 router = APIRouter(prefix="/workflows", tags=["workflows"])

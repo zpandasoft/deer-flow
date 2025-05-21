@@ -21,13 +21,24 @@ from src.taskflow.agents.task_analyzer import TaskAnalyzerAgent
 from src.taskflow.agents.research_agent import ResearchAgent
 from src.taskflow.agents.step_planner import StepPlannerAgent
 from src.taskflow.agents.factory import get_agent_by_name
-from src.taskflow.exceptions import AgentError, WorkflowStateError
+from src.taskflow.exceptions import AgentError, WorkflowStateError, DatabaseError
 from src.taskflow.graph.types import (
     ObjectiveState, ObjectiveStatus, TaskState, TaskStatus, TaskItemState,
     StepState, StepStatus, TaskType, QualityLevel
 )
 from src.taskflow.prompts import apply_prompt_template
+# 导入数据库相关模块
+from src.taskflow.db.base import db_session
+from src.taskflow.db.models import Objective, Task, Step, Workflow
+from src.taskflow.db.service import (
+    ObjectiveService, TaskService, StepService, WorkflowService
+)
 
+# 实例化数据库服务
+objective_service = ObjectiveService(Objective)
+task_service = TaskService(Task)
+step_service = StepService(Step)
+workflow_service = WorkflowService(Workflow)
 
 # 获取日志记录器
 logger = logging.getLogger(__name__)
@@ -96,6 +107,65 @@ async def context_analyzer_node(state: TaskState) -> TaskState:
             role="system"
         )
         
+        # 保存数据到数据库
+        with db_session() as db:
+            try:
+                # 初始化或更新目标记录
+                objective_data = {
+                    "id": state.objective.objective_id,
+                    "title": state.objective.title or state.objective.query[:100],
+                    "description": state.objective.description or state.objective.query,
+                    "query": state.objective.query,
+                    "status": state.objective.status.value,
+                    "meta_data": {
+                        **(state.objective.metadata or {}),
+                        "context_analysis": result
+                    }
+                }
+                
+                # 检查objective是否已存在
+                existing_objective = objective_service.get(db, state.objective.objective_id)
+                if existing_objective:
+                    # 更新现有记录
+                    objective_service.update(db, db_obj=existing_objective, obj_in=objective_data)
+                    logger.info(f"更新数据库中的目标记录: {state.objective.objective_id}")
+                else:
+                    # 创建新记录
+                    objective_service.create(db, obj_in=objective_data)
+                    logger.info(f"创建数据库中的目标记录: {state.objective.objective_id}")
+                
+                # 创建或更新工作流记录
+                workflow_data = {
+                    "id": f"workflow-{state.objective.objective_id}",
+                    "name": f"分析工作流-{state.objective.title or state.objective.query[:50]}",
+                    "description": f"目标 '{state.objective.title or state.objective.query[:50]}' 的工作流",
+                    "workflow_type": "ANALYSIS",
+                    "status": "RUNNING",
+                    "objective_id": state.objective.objective_id,
+                    "current_node": "context_analyzer",
+                    "state": {
+                        "visited_nodes": list(state.visited_nodes),
+                        "intermediate_data": {"context_analysis": result}
+                    },
+                    "started_at": datetime.now()
+                }
+                
+                # 检查workflow是否已存在
+                existing_workflow = workflow_service.get(db, workflow_data["id"])
+                if existing_workflow:
+                    # 更新现有记录
+                    workflow_service.update(db, db_obj=existing_workflow, obj_in=workflow_data)
+                    logger.info(f"更新数据库中的工作流记录: {workflow_data['id']}")
+                else:
+                    # 创建新记录
+                    workflow_service.create(db, obj_in=workflow_data)
+                    logger.info(f"创建数据库中的工作流记录: {workflow_data['id']}")
+                
+                logger.info(f"成功将上下文分析结果保存到数据库，目标ID: {state.objective.objective_id}")
+            except Exception as e:
+                logger.error(f"保存上下文分析结果到数据库时出错: {str(e)}")
+                # 不抛出异常，让流程继续，但记录错误
+        
         return state
         
     except Exception as e:
@@ -145,6 +215,7 @@ async def objective_decomposer_node(state: TaskState) -> TaskState:
         result = await agent.run(agent_input)
         
         # 更新状态
+        task_ids = []  # 保存创建的任务ID
         for i, task_data in enumerate(result.tasks):
             # 创建任务ID
             task_id = f"task-{state.objective.objective_id}-{i+1}"
@@ -167,6 +238,7 @@ async def objective_decomposer_node(state: TaskState) -> TaskState:
             
             # 添加任务到目标
             state.add_task(task)
+            task_ids.append(task_id)
         
         # 处理依赖关系
         if "task_dependencies" in state.intermediate_data:
@@ -200,6 +272,60 @@ async def objective_decomposer_node(state: TaskState) -> TaskState:
             f"目标分解完成。识别到{len(state.objective.tasks)}个任务。",
             role="system"
         )
+        
+        # 保存数据到数据库
+        with db_session() as db:
+            try:
+                # 1. 更新objective记录
+                objective_data = {
+                    "id": state.objective.objective_id,
+                    "title": state.objective.title,
+                    "description": state.objective.description,
+                    "query": state.objective.query,
+                    "status": state.objective.status.value,
+                    "meta_data": state.objective.metadata
+                }
+                
+                # 检查objective是否已存在
+                existing_objective = objective_service.get(db, state.objective.objective_id)
+                if existing_objective:
+                    # 更新现有记录
+                    objective_service.update(db, db_obj=existing_objective, obj_in=objective_data)
+                    logger.info(f"更新数据库中的目标记录: {state.objective.objective_id}")
+                else:
+                    # 创建新记录
+                    objective_service.create(db, obj_in=objective_data)
+                    logger.info(f"创建数据库中的目标记录: {state.objective.objective_id}")
+                
+                # 2. 创建或更新task记录
+                for task in state.objective.tasks:
+                    task_data = {
+                        "id": task.task_id,
+                        "title": task.title,
+                        "description": task.description,
+                        "task_type": task.task_type.value,
+                        "status": task.status.value,
+                        "priority": task.priority,
+                        "objective_id": task.objective_id,
+                        "depends_on": task.depends_on,
+                        "meta_data": task.metadata
+                    }
+                    
+                    # 检查task是否已存在
+                    existing_task = task_service.get(db, task.task_id)
+                    if existing_task:
+                        # 更新现有记录
+                        task_service.update(db, db_obj=existing_task, obj_in=task_data)
+                        logger.info(f"更新数据库中的任务记录: {task.task_id}")
+                    else:
+                        # 创建新记录
+                        task_service.create(db, obj_in=task_data)
+                        logger.info(f"创建数据库中的任务记录: {task.task_id}")
+                
+                logger.info(f"成功将目标分解结果保存到数据库，目标ID: {state.objective.objective_id}")
+            except Exception as e:
+                logger.error(f"保存目标分解结果到数据库时出错: {str(e)}")
+                # 不抛出异常，让流程继续，但记录错误
         
         return state
         
@@ -299,6 +425,74 @@ async def task_analyzer_node(state: TaskState) -> TaskState:
             f"任务分析完成。任务'{current_task.title}'被分解为{len(current_task.steps)}个步骤。",
             role="system"
         )
+        
+        # 保存数据到数据库
+        with db_session() as db:
+            try:
+                # 1. 更新task记录
+                task_data = {
+                    "id": current_task.task_id,
+                    "title": current_task.title,
+                    "description": current_task.description,
+                    "task_type": current_task.task_type.value,
+                    "status": current_task.status.value,
+                    "priority": current_task.priority,
+                    "objective_id": current_task.objective_id,
+                    "meta_data": current_task.metadata,
+                    "started_at": current_task.started_at,
+                }
+                
+                # 检查task是否已存在
+                existing_task = task_service.get(db, current_task.task_id)
+                if existing_task:
+                    # 更新现有记录
+                    task_service.update(db, db_obj=existing_task, obj_in=task_data)
+                    logger.info(f"更新数据库中的任务记录: {current_task.task_id}")
+                else:
+                    # 创建新记录
+                    task_service.create(db, obj_in=task_data)
+                    logger.info(f"创建数据库中的任务记录: {current_task.task_id}")
+                
+                # 2. 创建或更新step记录
+                for step in current_task.steps:
+                    step_data = {
+                        "id": step.step_id,
+                        "name": step.title,
+                        "description": step.description,
+                        "step_type": step.agent_name or "default",
+                        "status": step.status.value,
+                        "task_id": step.task_id,
+                        "agent_type": step.agent_name,
+                        "input_data": step.input_data,
+                        "output_data": step.output_data,
+                        "priority": 0,  # 默认优先级
+                    }
+                    
+                    # 检查step是否已存在
+                    existing_step = step_service.get(db, step.step_id)
+                    if existing_step:
+                        # 更新现有记录
+                        step_service.update(db, db_obj=existing_step, obj_in=step_data)
+                        logger.info(f"更新数据库中的步骤记录: {step.step_id}")
+                    else:
+                        # 创建新记录
+                        step_data["task_id"] = step.task_id
+                        step_service.create(db, obj_in=step_data)
+                        logger.info(f"创建数据库中的步骤记录: {step.step_id}")
+                
+                # 3. 更新objective状态
+                objective_data = {
+                    "status": state.objective.status.value,
+                }
+                existing_objective = objective_service.get(db, state.objective.objective_id)
+                if existing_objective:
+                    objective_service.update(db, db_obj=existing_objective, obj_in=objective_data)
+                    logger.info(f"更新数据库中的目标状态: {state.objective.objective_id}")
+                
+                logger.info(f"成功将任务分析结果保存到数据库，任务ID: {current_task.task_id}")
+            except Exception as e:
+                logger.error(f"保存任务分析结果到数据库时出错: {str(e)}")
+                # 不抛出异常，让流程继续，但记录错误
         
         return state
         
@@ -427,6 +621,62 @@ async def research_node(state: TaskState) -> TaskState:
             if next_pending_step:
                 next_pending_step.status = StepStatus.READY
                 state.current_step = next_pending_step
+        
+        # 保存数据到数据库
+        with db_session() as db:
+            try:
+                # 1. 更新步骤记录
+                step_data = {
+                    "id": current_step.step_id,
+                    "name": current_step.title,
+                    "description": current_step.description,
+                    "step_type": "research",
+                    "status": current_step.status.value,
+                    "agent_type": "research",
+                    "output_data": current_step.output_data,
+                    "started_at": current_step.started_at,
+                    "completed_at": current_step.completed_at
+                }
+                
+                # 检查步骤是否已存在
+                existing_step = step_service.get(db, current_step.step_id)
+                if existing_step:
+                    # 更新现有记录
+                    step_service.update(db, db_obj=existing_step, obj_in=step_data)
+                    logger.info(f"更新数据库中的步骤记录: {current_step.step_id}")
+                else:
+                    # 创建新记录
+                    step_data["task_id"] = current_step.task_id
+                    step_service.create(db, obj_in=step_data)
+                    logger.info(f"创建数据库中的步骤记录: {current_step.step_id}")
+                
+                # 2. 如果任务已完成，更新任务状态
+                if all_steps_completed:
+                    task_data = {
+                        "status": current_task.status.value,
+                        "completed_at": current_task.completed_at,
+                        "result": {"summary": current_task.result_summary}
+                    }
+                    
+                    existing_task = task_service.get(db, current_task.task_id)
+                    if existing_task:
+                        task_service.update(db, db_obj=existing_task, obj_in=task_data)
+                        logger.info(f"更新数据库中的任务完成状态: {current_task.task_id}")
+                
+                    # 更新依赖此任务的其他任务状态
+                    for dep_id in current_task.dependents:
+                        dep_task = state.get_task_by_id(dep_id)
+                        if dep_task and dep_task.status == TaskStatus.READY:
+                            dep_task_data = {"status": dep_task.status.value}
+                            existing_dep_task = task_service.get(db, dep_id)
+                            if existing_dep_task:
+                                task_service.update(db, db_obj=existing_dep_task, obj_in=dep_task_data)
+                                logger.info(f"更新数据库中的依赖任务状态: {dep_id}")
+                
+                logger.info(f"成功将研究结果保存到数据库，步骤ID: {current_step.step_id}")
+            except Exception as e:
+                logger.error(f"保存研究结果到数据库时出错: {str(e)}")
+                # 不抛出异常，让流程继续，但记录错误
         
         return state
         
@@ -564,6 +814,80 @@ async def processing_node(state: TaskState) -> TaskState:
                 next_pending_step.status = StepStatus.READY
                 state.current_step = next_pending_step
         
+        # 保存数据到数据库
+        with db_session() as db:
+            try:
+                # 1. 更新步骤记录
+                step_data = {
+                    "id": current_step.step_id,
+                    "name": current_step.title,
+                    "description": current_step.description,
+                    "step_type": agent_name,
+                    "status": current_step.status.value,
+                    "agent_type": agent_name,
+                    "input_data": current_step.input_data,
+                    "output_data": current_step.output_data,
+                    "started_at": current_step.started_at,
+                    "completed_at": current_step.completed_at
+                }
+                
+                # 检查步骤是否已存在
+                existing_step = step_service.get(db, current_step.step_id)
+                if existing_step:
+                    # 更新现有记录
+                    step_service.update(db, db_obj=existing_step, obj_in=step_data)
+                    logger.info(f"更新数据库中的步骤记录: {current_step.step_id}")
+                else:
+                    # 创建新记录
+                    step_data["task_id"] = current_step.task_id
+                    step_service.create(db, obj_in=step_data)
+                    logger.info(f"创建数据库中的步骤记录: {current_step.step_id}")
+                
+                # 2. 如果任务已完成，更新任务状态
+                if all_steps_completed:
+                    task_data = {
+                        "status": current_task.status.value,
+                        "completed_at": current_task.completed_at,
+                        "result": {"summary": current_task.result_summary}
+                    }
+                    
+                    existing_task = task_service.get(db, current_task.task_id)
+                    if existing_task:
+                        task_service.update(db, db_obj=existing_task, obj_in=task_data)
+                        logger.info(f"更新数据库中的任务完成状态: {current_task.task_id}")
+                
+                    # 更新依赖此任务的其他任务状态
+                    for dep_id in current_task.dependents:
+                        dep_task = state.get_task_by_id(dep_id)
+                        if dep_task and dep_task.status == TaskStatus.READY:
+                            dep_task_data = {"status": dep_task.status.value}
+                            existing_dep_task = task_service.get(db, dep_id)
+                            if existing_dep_task:
+                                task_service.update(db, db_obj=existing_dep_task, obj_in=dep_task_data)
+                                logger.info(f"更新数据库中的依赖任务状态: {dep_id}")
+                
+                # 3. 更新工作流状态
+                workflow_id = f"workflow-{state.objective.objective_id}"
+                existing_workflow = workflow_service.get(db, workflow_id)
+                
+                if existing_workflow:
+                    workflow_data = {
+                        "current_node": "processing",
+                        "state": {
+                            **(existing_workflow.state or {}),
+                            "last_processed_step": current_step.step_id,
+                            "last_processed_at": datetime.now().isoformat()
+                        }
+                    }
+                    
+                    workflow_service.update(db, db_obj=existing_workflow, obj_in=workflow_data)
+                    logger.info(f"更新数据库中的工作流状态: {workflow_id}")
+                
+                logger.info(f"成功将处理结果保存到数据库，步骤ID: {current_step.step_id}")
+            except Exception as e:
+                logger.error(f"保存处理结果到数据库时出错: {str(e)}")
+                # 不抛出异常，让流程继续，但记录错误
+        
         return state
         
     except Exception as e:
@@ -642,6 +966,87 @@ async def quality_evaluator_node(state: TaskState) -> TaskState:
             f"反馈: {result.get('feedback')}",
             role="system"
         )
+        
+        # 保存数据到数据库
+        with db_session() as db:
+            try:
+                # 根据目标类型保存评估结果
+                if hasattr(target, "step_id"):
+                    # 步骤类型
+                    step_id = target.step_id
+                    
+                    # 准备更新数据
+                    step_data = {
+                        "id": step_id,
+                        "meta_data": {
+                            **(target.metadata or {}),
+                        }
+                    }
+                    
+                    # 检查步骤是否已存在
+                    existing_step = step_service.get(db, step_id)
+                    if existing_step:
+                        # 更新现有记录
+                        step_service.update(db, db_obj=existing_step, obj_in=step_data)
+                        logger.info(f"更新数据库中的步骤质量评估: {step_id}")
+                    else:
+                        logger.warning(f"未找到步骤记录，无法更新质量评估: {step_id}")
+                
+                else:
+                    # 任务类型
+                    task_id = target.task_id
+                    
+                    # 准备更新数据
+                    task_data = {
+                        "id": task_id,
+                        "meta_data": {
+                            **(target.metadata or {}),
+                        }
+                    }
+                    
+                    # 检查任务是否已存在
+                    existing_task = task_service.get(db, task_id)
+                    if existing_task:
+                        # 更新现有记录
+                        task_service.update(db, db_obj=existing_task, obj_in=task_data)
+                        logger.info(f"更新数据库中的任务质量评估: {task_id}")
+                    else:
+                        logger.warning(f"未找到任务记录，无法更新质量评估: {task_id}")
+                
+                # 记录评估历史到工作流
+                workflow_id = f"workflow-{state.objective.objective_id}"
+                existing_workflow = workflow_service.get(db, workflow_id)
+                
+                if existing_workflow:
+                    # 更新工作流状态以包含评估
+                    current_state = existing_workflow.state or {}
+                    evaluations = current_state.get("evaluations", [])
+                    
+                    # 添加新评估
+                    evaluations.append({
+                        "target_id": agent_input["target_id"],
+                        "target_type": agent_input["target_type"],
+                        "quality_level": quality_level,
+                        "score": result.get("score"),
+                        "feedback": result.get("feedback"),
+                        "evaluated_at": datetime.now().isoformat()
+                    })
+                    
+                    # 更新工作流状态
+                    current_state["evaluations"] = evaluations
+                    
+                    workflow_data = {
+                        "current_node": "quality_evaluator",
+                        "state": current_state
+                    }
+                    
+                    workflow_service.update(db, db_obj=existing_workflow, obj_in=workflow_data)
+                    logger.info(f"更新数据库中的工作流评估历史: {workflow_id}")
+                
+                logger.info(f"成功将质量评估结果保存到数据库")
+            except Exception as e:
+                logger.error(f"保存质量评估结果到数据库时出错: {str(e)}")
+                # 不抛出异常，让流程继续，但记录错误
         
         return state
         
@@ -724,6 +1129,60 @@ async def synthesis_node(state: TaskState) -> TaskState:
             role="system"
         )
         
+        # 保存数据到数据库
+        with db_session() as db:
+            try:
+                # 更新objective记录
+                objective_data = {
+                    "status": state.objective.status.value,
+                    "completed_at": state.objective.completed_at,
+                    "meta_data": {
+                        **(state.objective.metadata or {}),
+                        "synthesis_result": result
+                    }
+                }
+                
+                # 检查objective是否已存在
+                existing_objective = objective_service.get(db, state.objective.objective_id)
+                if existing_objective:
+                    # 更新现有记录
+                    objective_service.update(db, db_obj=existing_objective, obj_in=objective_data)
+                    logger.info(f"更新数据库中的目标合成结果: {state.objective.objective_id}")
+                else:
+                    logger.warning(f"未找到目标记录，无法更新合成结果: {state.objective.objective_id}")
+                
+                # 创建标记为完成的工作流记录
+                workflow_data = {
+                    "id": f"workflow-{state.objective.objective_id}",
+                    "name": f"合成工作流-{state.objective.title}",
+                    "description": f"目标 '{state.objective.title}' 的合成工作流",
+                    "workflow_type": "SYNTHESIS",
+                    "status": "COMPLETED",
+                    "objective_id": state.objective.objective_id,
+                    "current_node": "synthesis",
+                    "state": {
+                        "visited_nodes": list(state.visited_nodes),
+                        "completed_at": datetime.now().isoformat()
+                    },
+                    "completed_at": datetime.now()
+                }
+                
+                # 检查workflow是否已存在
+                existing_workflow = workflow_service.get(db, workflow_data["id"])
+                if existing_workflow:
+                    # 更新现有记录
+                    workflow_service.update(db, db_obj=existing_workflow, obj_in=workflow_data)
+                    logger.info(f"更新数据库中的工作流记录: {workflow_data['id']}")
+                else:
+                    # 创建新记录
+                    workflow_service.create(db, obj_in=workflow_data)
+                    logger.info(f"创建数据库中的工作流记录: {workflow_data['id']}")
+                
+                logger.info(f"成功将合成结果保存到数据库，目标ID: {state.objective.objective_id}")
+            except Exception as e:
+                logger.error(f"保存合成结果到数据库时出错: {str(e)}")
+                # 不抛出异常，让流程继续，但记录错误
+        
         return state
         
     except Exception as e:
@@ -777,6 +1236,90 @@ async def error_handler_node(state: TaskState) -> TaskState:
         
         # 处理错误恢复建议
         recovery_action = result.get("recovery_action")
+        
+        # 记录错误和处理结果到数据库
+        with db_session() as db:
+            try:
+                # 记录错误信息和处理结果
+                error_record = {
+                    "error_type": error.get("type"),
+                    "error_message": error.get("message"),
+                    "error_details": error.get("details", {}),
+                    "node_history": list(state.visited_nodes),
+                    "current_task_id": state.current_task.task_id if state.current_task else None,
+                    "current_step_id": state.current_step.step_id if state.current_step else None,
+                    "recovery_action": recovery_action,
+                    "recovery_details": result,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                # 更新workflow记录
+                workflow_id = f"workflow-{state.objective.objective_id}"
+                existing_workflow = workflow_service.get(db, workflow_id)
+                
+                if existing_workflow:
+                    # 获取现有状态
+                    current_state = existing_workflow.state or {}
+                    
+                    # 更新错误历史
+                    error_history = current_state.get("error_history", [])
+                    error_history.append(error_record)
+                    current_state["error_history"] = error_history
+                    
+                    # 更新工作流状态
+                    workflow_data = {
+                        "current_node": "error_handler",
+                        "state": current_state
+                    }
+                    
+                    workflow_service.update(db, db_obj=existing_workflow, obj_in=workflow_data)
+                    logger.info(f"更新数据库中的工作流错误记录: {workflow_id}")
+                
+                # 如果有当前步骤，记录错误
+                if state.current_step:
+                    step_id = state.current_step.step_id
+                    step_data = {
+                        "error": error.get("message"),
+                        "status": "FAILED" if recovery_action in ["fail_task", "skip_step"] else "RETRY"
+                    }
+                    
+                    existing_step = step_service.get(db, step_id)
+                    if existing_step:
+                        step_service.update(db, db_obj=existing_step, obj_in=step_data)
+                        logger.info(f"更新数据库中的步骤错误状态: {step_id}")
+                
+                # 如果有当前任务且动作是fail_task，记录错误
+                if state.current_task and recovery_action == "fail_task":
+                    task_id = state.current_task.task_id
+                    task_data = {
+                        "status": "FAILED",
+                        "meta_data": {
+                            **(state.current_task.metadata or {}),
+                            "error": error.get("message"),
+                            "error_handled_at": datetime.now().isoformat()
+                        }
+                    }
+                    
+                    existing_task = task_service.get(db, task_id)
+                    if existing_task:
+                        task_service.update(db, db_obj=existing_task, obj_in=task_data)
+                        logger.info(f"更新数据库中的任务错误状态: {task_id}")
+                
+                # 如果动作是restart_workflow，更新目标状态
+                if recovery_action == "restart_workflow":
+                    objective_data = {
+                        "status": "RESTARTING"
+                    }
+                    
+                    existing_objective = objective_service.get(db, state.objective.objective_id)
+                    if existing_objective:
+                        objective_service.update(db, db_obj=existing_objective, obj_in=objective_data)
+                        logger.info(f"更新数据库中的目标重启状态: {state.objective.objective_id}")
+                
+                logger.info(f"成功将错误处理结果保存到数据库")
+            except Exception as e:
+                logger.error(f"保存错误处理结果到数据库时出错: {str(e)}")
+                # 不抛出异常，让流程继续，但记录错误
         
         if recovery_action == "retry_step" and state.current_step:
             # 重试当前步骤
@@ -881,6 +1424,25 @@ async def error_handler_node(state: TaskState) -> TaskState:
         state.objective.status = ObjectiveStatus.FAILED
         state.objective.error_message = f"无法恢复的错误: {error_msg}"
         
+        # 尝试记录最终错误到数据库
+        try:
+            with db_session() as db:
+                objective_data = {
+                    "status": state.objective.status.value,
+                    "meta_data": {
+                        **(state.objective.metadata or {}),
+                        "fatal_error": error_msg,
+                        "fatal_error_at": datetime.now().isoformat()
+                    }
+                }
+                
+                existing_objective = objective_service.get(db, state.objective.objective_id)
+                if existing_objective:
+                    objective_service.update(db, db_obj=existing_objective, obj_in=objective_data)
+                    logger.info(f"更新数据库中的目标失败状态: {state.objective.objective_id}")
+        except Exception as db_err:
+            logger.error(f"在记录致命错误到数据库时出错: {str(db_err)}")
+        
         raise WorkflowStateError(error_msg) from e
 
 
@@ -982,6 +1544,64 @@ async def initialize_workflow_node(state: TaskState) -> TaskState:
         # 如果目标的started_at未设置，则设置
         if not state.objective.started_at:
             state.objective.started_at = datetime.now()
+        
+        # 保存数据到数据库
+        with db_session() as db:
+            try:
+                # 1. 确保目标记录存在
+                objective_data = {
+                    "id": state.objective.objective_id,
+                    "title": state.objective.title or "未命名目标",
+                    "description": state.objective.description or "",
+                    "query": state.objective.query or "",
+                    "status": state.objective.status.value,
+                    "started_at": state.objective.started_at,
+                    "meta_data": state.objective.metadata or {}
+                }
+                
+                # 检查objective是否已存在
+                existing_objective = objective_service.get(db, state.objective.objective_id)
+                if existing_objective:
+                    # 更新现有记录
+                    objective_service.update(db, db_obj=existing_objective, obj_in=objective_data)
+                    logger.info(f"更新数据库中的目标记录: {state.objective.objective_id}")
+                else:
+                    # 创建新记录
+                    objective_service.create(db, obj_in=objective_data)
+                    logger.info(f"创建数据库中的目标记录: {state.objective.objective_id}")
+                
+                # 2. 创建工作流记录
+                workflow_data = {
+                    "id": f"workflow-{state.objective.objective_id}",
+                    "name": f"工作流-{state.objective.title or '未命名目标'}",
+                    "description": f"目标 '{state.objective.title or '未命名目标'}' 的主工作流",
+                    "workflow_type": "MAIN",
+                    "status": "RUNNING",
+                    "objective_id": state.objective.objective_id,
+                    "current_node": "initialize_workflow",
+                    "state": {
+                        "visited_nodes": list(state.visited_nodes),
+                        "created_at": datetime.now().isoformat(),
+                        "messages": [msg.dict() for msg in state.messages]
+                    },
+                    "started_at": datetime.now()
+                }
+                
+                # 检查workflow是否已存在
+                existing_workflow = workflow_service.get(db, workflow_data["id"])
+                if existing_workflow:
+                    # 更新现有记录
+                    workflow_service.update(db, db_obj=existing_workflow, obj_in=workflow_data)
+                    logger.info(f"更新数据库中的工作流记录: {workflow_data['id']}")
+                else:
+                    # 创建新记录
+                    workflow_service.create(db, obj_in=workflow_data)
+                    logger.info(f"创建数据库中的工作流记录: {workflow_data['id']}")
+                
+                logger.info(f"成功将工作流初始化状态保存到数据库，目标ID: {state.objective.objective_id}")
+            except Exception as e:
+                logger.error(f"保存工作流初始化状态到数据库时出错: {str(e)}")
+                # 不抛出异常，让流程继续，但记录错误
         
         return state
         

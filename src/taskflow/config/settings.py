@@ -10,13 +10,14 @@ TaskFlow配置设置模块。
 import os
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from dotenv import load_dotenv
 from pydantic import Field, validator
 from pydantic_settings import BaseSettings
 
 from src.taskflow.config.parser import jdbc_to_sqlalchemy_url
+from src.taskflow.config.loader import find_and_load_config
 
 # 获取日志记录器
 logger = logging.getLogger(__name__)
@@ -65,17 +66,16 @@ class DatabaseSettings(BaseSettings):
         if v:
             return v
         
-        jdbc_url = values.get("jdbc_url")
-        if not jdbc_url:
-            logger.warning("未提供jdbc.url或DB_SQLALCHEMY_URL，数据库连接可能不可用")
-            return ""
-        
-        try:
-            # 使用配置解析器从JDBC URL构建SQLAlchemy URL
+        # 尝试从JDBC URL生成SQLAlchemy URL
+        jdbc_url = values.get("jdbc_url", "")
+        if jdbc_url:
+            logger.info(f"使用JDBC URL: {jdbc_url}")
             return jdbc_to_sqlalchemy_url(jdbc_url)
-        except Exception as e:
-            logger.error(f"解析JDBC URL时出错: {str(e)}")
-            raise ValueError(f"无法从JDBC URL构建SQLAlchemy URL: {str(e)}")
+        
+        # 如果没有JDBC URL，回退到SQLite
+        logger.warning("未找到有效的数据库配置，使用SQLite作为后备选项")
+        sqlite_path = str(ROOT_DIR / "taskflow.db")
+        return f"sqlite:///{sqlite_path}"
 
 
 class APISettings(BaseSettings):
@@ -128,6 +128,7 @@ class SchedulerSettings(BaseSettings):
 class LLMSettings(BaseSettings):
     """LLM配置设置"""
     
+    # 默认模型配置
     model_type: str = Field(default="openai", env="LLM_MODEL_TYPE")
     model_name: str = Field(default="gpt-4", env="LLM_MODEL_NAME")
     temperature: float = Field(default=0.0, env="LLM_TEMPERATURE")
@@ -135,11 +136,187 @@ class LLMSettings(BaseSettings):
     api_key: str = Field(default="", env="LLM_API_KEY")
     api_base: str = Field(default="", env="LLM_API_BASE")
     
+    # 缓存配置
+    use_cache: bool = Field(default=True, env="LLM_USE_CACHE")
+    
     model_config = {
         "env_prefix": "LLM_",
         "env_file": ".env",
         "extra": "ignore"
     }
+    
+    def _load_llm_config(self) -> Dict[str, Any]:
+        """
+        加载LLM配置。
+        
+        尝试从conf.yaml加载配置，如果不存在则返回空字典。
+        
+        Returns:
+            LLM配置字典
+        """
+        config = find_and_load_config("conf.yaml")
+        if not config:
+            logger.warning("未找到conf.yaml配置文件，将使用默认配置")
+        return config
+    
+    def get_llm_config_by_type(self, llm_type: str) -> Dict[str, Any]:
+        """
+        根据LLM类型获取配置。
+        
+        Args:
+            llm_type: LLM类型
+            
+        Returns:
+            LLM配置字典
+        """
+        # LLM类型到配置键的映射
+        type_to_config = {
+            "basic": "BASIC_MODEL",
+            "reasoning": "REASONING_MODEL",
+            "vision": "VISION_MODEL",
+            "coding": "CODING_MODEL",
+            "planning": "PLANNING_MODEL",
+        }
+        
+        # 获取配置键
+        config_key = type_to_config.get(llm_type, "BASIC_MODEL")
+        
+        # 加载配置
+        config = self._load_llm_config()
+        
+        # 从配置中获取对应类型的LLM配置
+        llm_config = config.get(config_key)
+        
+        # 如果不存在该类型的配置，使用基础模型配置
+        if not llm_config:
+            logger.warning(f"未找到类型 {llm_type} 的LLM配置，使用基础模型配置")
+            llm_config = config.get("BASIC_MODEL", {})
+        
+        # 如果配置中没有获取到任何信息，使用默认值
+        if not llm_config:
+            llm_config = {
+                "model": self.model_name,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+                "api_key": self.api_key,
+                "base_url": self.api_base,
+            }
+        
+        return llm_config
+    
+    def get_provider_for_agent(self, agent_type: str) -> str:
+        """
+        根据智能体类型获取LLM提供者类型。
+        
+        Args:
+            agent_type: 智能体类型
+            
+        Returns:
+            LLM提供者类型
+        """
+        # 所有智能体默认使用OpenAI提供者
+        # 可以后续根据需要调整不同智能体使用不同的LLM提供者
+        agent_to_provider = {
+            # 示例: 特定智能体类型对应特定提供者
+            # "research": "anthropic",
+            # "planning": "azure",
+        }
+        
+        # 获取提供者类型
+        provider_type = agent_to_provider.get(agent_type, self.model_type)
+        
+        logger.info(f"为智能体 {agent_type} 选择LLM提供者: {provider_type}")
+        return provider_type
+        
+    def get_provider_for_task(self, task_type: str) -> str:
+        """
+        根据任务类型获取LLM提供者类型。
+        
+        Args:
+            task_type: 任务类型
+            
+        Returns:
+            LLM提供者类型
+        """
+        # 所有任务默认使用OpenAI提供者
+        # 可以后续根据需要调整不同任务使用不同的LLM提供者
+        task_to_provider = {
+            # 示例: 特定任务类型对应特定提供者
+            # "coding": "anthropic",
+            # "reasoning": "azure",
+        }
+        
+        # 获取提供者类型
+        provider_type = task_to_provider.get(task_type, self.model_type)
+        
+        logger.info(f"为任务 {task_type} 选择LLM提供者: {provider_type}")
+        return provider_type
+        
+    def get_provider_settings(self, provider_type: str) -> "LLMProviderSettings":
+        """
+        根据提供者类型获取LLM提供者配置。
+        
+        Args:
+            provider_type: 提供者类型
+            
+        Returns:
+            LLM提供者配置
+        """
+        # 默认使用基础模型配置
+        basic_config = self.get_llm_config_by_type("basic")
+        
+        # 创建提供者设置
+        provider_settings = LLMProviderSettings(
+            provider_type=provider_type,
+            model_name=basic_config.get("model", self.model_name),
+            temperature=basic_config.get("temperature", self.temperature),
+            max_tokens=basic_config.get("max_tokens", self.max_tokens),
+            api_key=basic_config.get("api_key", self.api_key),
+            api_base=basic_config.get("base_url", self.api_base),
+            parameters={}
+        )
+        
+        logger.info(f"为提供者 {provider_type} 创建配置: model={provider_settings.model_name}")
+        return provider_settings
+    
+    @property
+    def default_provider(self) -> str:
+        """默认LLM提供者类型"""
+        return self.model_type
+
+
+class LLMProviderSettings:
+    """LLM提供者配置设置"""
+    
+    def __init__(
+        self,
+        provider_type: str,
+        model_name: str,
+        temperature: float,
+        max_tokens: int,
+        api_key: str,
+        api_base: str,
+        parameters: Dict[str, Any] = None
+    ):
+        """
+        初始化LLM提供者配置设置。
+        
+        Args:
+            provider_type: 提供者类型
+            model_name: 模型名称
+            temperature: 温度参数
+            max_tokens: 最大令牌数
+            api_key: API密钥
+            api_base: API基础URL
+            parameters: 其他参数
+        """
+        self.provider_type = provider_type
+        self.model_name = model_name
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.api_key = api_key
+        self.api_base = api_base
+        self.parameters = parameters or {}
 
 
 class Settings(BaseSettings):
@@ -182,4 +359,10 @@ if settings.debug:
     if settings.database.jdbc_url:
         logger.info(f"JDBC URL: {settings.database.jdbc_url}")
     else:
-        logger.warning("未配置JDBC URL，使用直接的SQLAlchemy URL") 
+        logger.warning("未配置JDBC URL，使用直接的SQLAlchemy URL")
+    
+    # 记录 LLM 配置摘要
+    basic_config = settings.llm.get_llm_config_by_type("basic")
+    config_keys = ["model", "temperature", "max_tokens"]
+    config_summary = ", ".join([f"{k}={basic_config.get(k)}" for k in config_keys if k in basic_config])
+    logger.info(f"LLM基础配置: {config_summary}") 

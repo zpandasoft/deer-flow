@@ -1111,4 +1111,99 @@ def get_db() -> Session:
     try:
         yield db
     finally:
-        db.close() 
+        db.close()
+
+
+class DatabaseService:
+    """临时数据库服务类，用于兼容API端点。
+    
+    注意：这是一个占位实现，提供与异步API兼容的接口但实际使用同步操作。
+    在生产环境中应该使用正确的异步实现。
+    """
+    
+    def __init__(self, session):
+        """初始化数据库服务。
+        
+        Args:
+            session: 数据库会话
+        """
+        self.session = session
+        self.objective_service = ObjectiveService(Objective)
+        self.task_service = TaskService(Task)
+        self.step_service = StepService(Step)
+        self.workflow_service = WorkflowService(Workflow)
+    
+    async def get_objective(self, objective_id: str):
+        """获取目标信息。
+        
+        Args:
+            objective_id: 目标ID
+            
+        Returns:
+            目标信息
+        """
+        # 同步操作的简单包装
+        objective = self.objective_service.get(self.session, objective_id)
+        if not objective:
+            raise ObjectiveNotFoundError(f"目标不存在: {objective_id}")
+        
+        # 转换为字典
+        return {
+            "id": objective.id,
+            "title": objective.title,
+            "description": objective.description,
+            "status": objective.status,
+            "created_at": objective.created_at or datetime.now(),
+            "updated_at": objective.updated_at or datetime.now(),
+            "user_id": objective.user_id,
+            "priority": objective.priority or 2,
+            "tags": objective.tags or [],
+            "progress": 0.0,  # 占位值
+            "estimated_completion": None,
+            "task_count": 0,  # 占位值
+            "completed_task_count": 0  # 占位值
+        }
+        
+    async def create_objective(self, objective_data):
+        """创建目标。
+        
+        Args:
+            objective_data: 目标数据
+            
+        Returns:
+            目标ID
+        """
+        # 同步操作的简单包装
+        objective = self.objective_service.create(self.session, obj_in=objective_data)
+        return objective.id
+        
+    async def update_objective(self, objective_id, update_data):
+        """更新目标。
+        
+        Args:
+            objective_id: 目标ID
+            update_data: 更新数据
+            
+        Returns:
+            更新后的目标信息
+        """
+        # 同步操作的简单包装
+        objective = self.objective_service.get(self.session, objective_id)
+        if not objective:
+            raise ObjectiveNotFoundError(f"目标不存在: {objective_id}")
+            
+        updated = self.objective_service.update(self.session, db_obj=objective, obj_in=update_data)
+        return updated.id
+        
+    # 临时实现其他方法，返回空列表或默认值
+    async def get_tasks_by_objective(self, objective_id, filters=None, skip=0, limit=100):
+        """获取目标下的任务列表。"""
+        return []
+        
+    async def get_workflows_by_objective(self, objective_id):
+        """获取目标关联的工作流。"""
+        return []
+        
+    async def update_task(self, task_id, update_data):
+        """更新任务信息。"""
+        return task_id 

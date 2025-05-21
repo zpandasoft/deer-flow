@@ -146,7 +146,7 @@ class WorkflowCreate(BaseModel):
             raise ValueError('名称不能为空')
         return v
     
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def check_objective_or_task(cls, values):
         """验证目标ID或任务ID至少有一个"""
         if not values.get('objective_id') and not values.get('task_id'):

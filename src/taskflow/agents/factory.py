@@ -21,7 +21,7 @@ from src.taskflow.agents.step_planner import StepPlannerAgent
 from src.taskflow.agents.synthesis_agent import SynthesisAgent
 from src.taskflow.agents.task_analyzer import TaskAnalyzerAgent
 from src.taskflow.exceptions import AgentError
-from src.taskflow.llm_factory import llm_factory
+from src.taskflow.llm.factory import llm_factory
 
 # 获取日志记录器
 logger = logging.getLogger(__name__)
@@ -114,8 +114,8 @@ class AgentFactory:
         
         # 对于LLM智能体，如果未提供LLM，则创建一个
         if "llm" not in kwargs and hasattr(agent_class, "_call_llm"):
-            # 使用LLM工厂创建LLM实例
-            kwargs["llm"] = llm_factory.create_llm()
+            # 使用LLM工厂为该智能体类型创建LLM实例
+            kwargs["llm"] = llm_factory.get_llm_for_agent(agent_type)
         
         # 创建智能体实例
         try:

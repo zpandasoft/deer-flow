@@ -96,4 +96,9 @@ class APIError(TaskflowError):
 
 class ConfigurationError(TaskflowError):
     """配置错误"""
+    pass
+
+
+class LLMError(TaskflowError):
+    """LLM错误异常"""
     pass 

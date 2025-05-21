@@ -57,7 +57,7 @@ if __name__ == "__main__":
 
     logger.info("Starting DeerFlow API server")
     uvicorn.run(
-        "src.server:app",
+        "src.taskflow.api:app",
         host=args.host,
         port=args.port,
         reload=reload,

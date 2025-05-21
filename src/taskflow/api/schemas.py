@@ -213,4 +213,18 @@ class ErrorResponse(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now, description="错误时间")
 
 
-class MultiAgentStreamRequest(BaseModel):    """多智能体流式请求模型"""    query: str = Field(..., description="用户查询/研究问题")    thread_id: str = Field("__default__", description="会话ID，默认创建新会话")    locale: str = Field("zh-CN", description="语言设置，默认中文")    max_steps: int = Field(10, description="最大步骤数")    auto_execute: bool = Field(False, description="是否自动执行（无需人工确认）")    interrupt_feedback: Optional[str] = Field(None, description="中断反馈")    additional_context: Optional[Dict[str, Any]] = Field(None, description="额外上下文信息，用于提供更多背景")        @validator('query')    def query_must_not_be_empty(cls, v):        if not v or not v.strip():            raise ValueError('查询不能为空')        return v  
+class MultiAgentStreamRequest(BaseModel):
+    """多智能体流式请求模型"""
+    query: str = Field(..., description="用户查询/研究问题")
+    thread_id: str = Field("__default__", description="会话ID，默认创建新会话")
+    locale: str = Field("zh-CN", description="语言设置，默认中文")
+    max_steps: int = Field(10, description="最大步骤数")
+    auto_execute: bool = Field(False, description="是否自动执行（无需人工确认）")
+    interrupt_feedback: Optional[str] = Field(None, description="中断反馈")
+    additional_context: Optional[Dict[str, Any]] = Field(None, description="额外上下文信息，用于提供更多背景")
+    
+    @validator('query')
+    def query_must_not_be_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError('查询不能为空')
+        return v  

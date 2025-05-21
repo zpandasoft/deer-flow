@@ -6,42 +6,60 @@
 该模块提供API端点使用的依赖注入函数，用于获取服务实例。
 """
 
-from typing import Generator, Optional
+from typing import Generator, Optional, Dict, Any
 
 from fastapi import Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
-from src.taskflow.db.base import get_async_session
-from src.taskflow.db.service import DatabaseService
-from src.taskflow.scheduler.scheduler import TaskScheduler, get_scheduler
-from src.taskflow.graph.builder import WorkflowService, get_workflow_service
+from src.taskflow.db.base import get_db_session
+from src.taskflow.scheduler.scheduler import TaskScheduler
 
 
-async def get_db() -> Generator[DatabaseService, None, None]:
-    """获取数据库服务实例。
+# 工作流服务类定义
+class WorkflowService:
+    """工作流服务类。
     
-    依赖注入函数，用于在API端点中获取数据库服务实例。
-    
-    Yields:
-        DatabaseService: 数据库服务实例
+    处理工作流创建、执行和管理。
     """
-    session: AsyncSession = await get_async_session()
-    try:
-        db = DatabaseService(session)
-        yield db
-    finally:
-        await session.close()
+    
+    def __init__(self):
+        """初始化工作流服务。"""
+        self.workflows = {}
+    
+    def create_workflow(self, workflow_type: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """创建新工作流。
+        
+        Args:
+            workflow_type: 工作流类型
+            data: 工作流数据
+            
+        Returns:
+            创建的工作流信息
+        """
+        # 简单实现，实际项目中会有更复杂的逻辑
+        workflow_id = data.get("id", f"workflow-{len(self.workflows) + 1}")
+        self.workflows[workflow_id] = {
+            "id": workflow_id,
+            "type": workflow_type,
+            "data": data,
+            "status": "CREATED"
+        }
+        return self.workflows[workflow_id]
+    
+    def get_workflow(self, workflow_id: str) -> Optional[Dict[str, Any]]:
+        """获取工作流信息。
+        
+        Args:
+            workflow_id: 工作流ID
+            
+        Returns:
+            工作流信息或None
+        """
+        return self.workflows.get(workflow_id)
 
 
-def get_scheduler_service() -> TaskScheduler:
-    """获取任务调度器实例。
-    
-    依赖注入函数，用于在API端点中获取任务调度器实例。
-    
-    Returns:
-        TaskScheduler: 任务调度器实例
-    """
-    return get_scheduler()
+# 单例工作流服务实例
+_workflow_service_instance = None
 
 
 def get_workflow_svc() -> WorkflowService:
@@ -52,7 +70,38 @@ def get_workflow_svc() -> WorkflowService:
     Returns:
         WorkflowService: 工作流服务实例
     """
-    return get_workflow_service()
+    global _workflow_service_instance
+    if _workflow_service_instance is None:
+        _workflow_service_instance = WorkflowService()
+    return _workflow_service_instance
+
+
+def get_db() -> Generator[Session, None, None]:
+    """获取数据库会话实例。
+    
+    依赖注入函数，用于在API端点中获取数据库会话实例。
+    
+    Yields:
+        Session: 数据库会话实例
+    """
+    session = get_db_session()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def get_scheduler_service() -> TaskScheduler:
+    """获取任务调度器实例。
+    
+    依赖注入函数，用于在API端点中获取任务调度器实例。
+    
+    Returns:
+        TaskScheduler: 任务调度器实例
+    """
+    # 创建一个新的调度器实例
+    scheduler = TaskScheduler()
+    return scheduler
 
 
 # API权限相关的依赖（如果需要）

@@ -221,7 +221,7 @@ class TaskState(BaseState):
     # 资源跟踪
     allocated_resources: List[ResourceState] = Field(default_factory=list, description="已分配的资源")
     
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def check_task_consistency(cls, values):
         """验证任务一致性"""
         objective = values.get("objective")

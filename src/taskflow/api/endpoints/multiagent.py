@@ -18,6 +18,7 @@ from starlette.responses import StreamingResponse
 
 from src.taskflow.api.schemas import MultiAgentStreamRequest
 from src.taskflow.graph.multiagent_builder import build_multiagent_graph
+from src.taskflow.graph.types import TaskState, WorkflowMetadata, ObjectiveState, ObjectiveStatus
 
 
 logger = logging.getLogger(__name__)
@@ -154,29 +155,43 @@ async def _astream_multiagent_workflow_generator(
         # 构建工作流图
         graph = build_multiagent_graph()
         
-        # 准备初始状态
-        input_ = {
-            "query": query,
-            "messages": [],
-            "locale": locale,
-            "objectives": [],
-            "tasks": [],
-            "steps": [],
-            "execution_results": {},
-            "current_node": "context_analyzer",
-            "auto_execute": auto_execute,
-            "additional_context": additional_context or {},
-        }
+        # 创建工作流元数据
+        workflow_metadata = WorkflowMetadata(
+            workflow_id=f"wf-{uuid4()}",
+            workflow_type="multiagent",
+            user_id=None,
+            tags=[]
+        )
+        
+        # 创建目标状态
+        objective = ObjectiveState(
+            objective_id=f"obj-{uuid4()}",
+            title=query[:50] + ("..." if len(query) > 50 else ""),
+            query=query,
+            status=ObjectiveStatus.CREATED
+        )
+        
+        # 创建初始TaskState
+        input_state = TaskState(
+            workflow_metadata=workflow_metadata,
+            objective=objective,
+            messages=[],
+            intermediate_data={
+                "locale": locale,
+                "auto_execute": auto_execute,
+                "additional_context": additional_context or {},
+            }
+        )
         
         # 处理中断恢复
         if not auto_execute and interrupt_feedback:
-            input_["interrupt_feedback"] = interrupt_feedback
+            input_state.intermediate_data["interrupt_feedback"] = interrupt_feedback
         
         logger.info(f"Starting multiagent workflow with query: {query}")
         
         # 流式执行工作流
         async for agent, _, event_data in graph.astream(
-            input_,
+            input_state,
             config={
                 "thread_id": thread_id,
                 "max_steps": max_steps,

@@ -207,7 +207,7 @@ def jdbc_to_sqlalchemy_url(jdbc_url: str, driver_mapping: Optional[Dict[str, str
         # 将 MySQL 特有参数转换为 SQLAlchemy 支持的格式
         param_mapping = {
             "serverTimezone": "time_zone",
-            "useSSL": "ssl",
+            "useSSL": None,  # 移除SSL参数，避免解析问题
             "useLegacyDatetimeCode": None,  # 移除不支持的参数
             "characterEncoding": "charset"
         }
