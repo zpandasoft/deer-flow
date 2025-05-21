@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.types import Command
 
 from src.graph.builder import build_graph_with_memory
+from src.graph.multiagent_builder import build_multiagent_graph_with_memory
 from src.podcast.graph.builder import build_graph as build_podcast_graph
 from src.ppt.graph.builder import build_graph as build_ppt_graph
 from src.prose.graph.builder import build_graph as build_prose_graph
@@ -24,10 +25,12 @@ from src.server.chat_request import (
     GeneratePodcastRequest,
     GeneratePPTRequest,
     GenerateProseRequest,
+    MultiAgentStreamRequest,
     TTSRequest,
 )
 from src.server.mcp_request import MCPServerMetadataRequest, MCPServerMetadataResponse
 from src.server.mcp_utils import load_mcp_tools
+from src.server.multiagent_controller import MultiAgentStreamController
 from src.tools import VolcengineTTS
 
 logger = logging.getLogger(__name__)
@@ -48,6 +51,7 @@ app.add_middleware(
 )
 
 graph = build_graph_with_memory()
+multiagent_controller = MultiAgentStreamController()
 
 
 @app.post("/api/chat/stream")
@@ -316,3 +320,24 @@ async def mcp_server_metadata(request: MCPServerMetadataRequest):
             logger.exception(f"Error in MCP server metadata endpoint: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
         raise
+
+
+@app.post("/api/v1/multiagent/stream")
+async def multiagent_stream(request: MultiAgentStreamRequest):
+    """多智能体研究流接口"""
+    thread_id = request.thread_id
+    if thread_id == "__default__":
+        thread_id = str(uuid4())
+    
+    return StreamingResponse(
+        multiagent_controller._astream_multiagent_generator(
+            query=request.query,
+            thread_id=thread_id,
+            locale=request.locale,
+            max_steps=request.max_steps,
+            auto_execute=request.auto_execute,
+            interrupt_feedback=request.interrupt_feedback,
+            additional_context=request.additional_context,
+        ),
+        media_type="text/event-stream",
+    )

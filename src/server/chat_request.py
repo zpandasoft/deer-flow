@@ -1,7 +1,7 @@
 # Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 # SPDX-License-Identifier: MIT
 
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict, Any
 
 from pydantic import BaseModel, Field
 
@@ -81,4 +81,26 @@ class GenerateProseRequest(BaseModel):
     option: str = Field(..., description="The option of the prose writer")
     command: Optional[str] = Field(
         "", description="The user custom command of the prose writer"
+    )
+
+
+class MultiAgentStreamRequest(BaseModel):
+    query: str = Field(..., description="The research query or question to process")
+    thread_id: Optional[str] = Field(
+        "__default__", description="A specific conversation identifier"
+    )
+    locale: Optional[str] = Field(
+        "zh-CN", description="The locale for the response (e.g., zh-CN, en-US)"
+    )
+    max_steps: Optional[int] = Field(
+        10, description="The maximum number of steps to execute"
+    )
+    auto_execute: Optional[bool] = Field(
+        False, description="Whether to automatically execute all steps without interruption"
+    )
+    interrupt_feedback: Optional[str] = Field(
+        None, description="Feedback provided during an interruption"
+    )
+    additional_context: Optional[Dict[str, Any]] = Field(
+        None, description="Additional context or parameters for the research"
     )

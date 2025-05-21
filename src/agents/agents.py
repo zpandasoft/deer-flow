@@ -30,3 +30,48 @@ research_agent = create_agent(
     "researcher", "researcher", [web_search_tool, crawl_tool], "researcher"
 )
 coder_agent = create_agent("coder", "coder", [python_repl_tool], "coder")
+
+# Context Analyzer Agent
+context_analyzer_agent = create_agent(
+    "context_analyzer", "context_analyzer", [web_search_tool], "context_analyzer"
+)
+
+# Objective Decomposer Agent
+objective_decomposer_agent = create_agent(
+    "objective_decomposer", "objective_decomposer", [], "objective_decomposer"
+)
+
+# Task Analyzer Agent
+task_analyzer_agent = create_agent(
+    "task_analyzer", "task_analyzer", [], "task_analyzer"
+)
+
+# Processing Agent
+processing_agent = create_agent(
+    "processing", "processing", [], "processing"
+)
+
+# Quality Evaluator Agent
+quality_evaluator_agent = create_agent(
+    "quality_evaluator", "quality_evaluator", [], "quality_evaluator"
+)
+
+# Synthesis Agent
+synthesis_agent = create_agent(
+    "synthesis", "synthesis", [], "synthesis"
+)
+
+# Sufficiency Evaluator Agent
+sufficiency_evaluator_agent = create_agent(
+    "sufficiency_evaluator", "sufficiency_evaluator", [], "sufficiency_evaluator"
+)
+
+# Error Handler Agent
+error_handler_agent = create_agent(
+    "error_handler", "error_handler", [], "error_handler"
+)
+
+# Human Interaction Agent
+human_interaction_agent = create_agent(
+    "human_interaction", "human_interaction", [], "human_interaction"
+)
