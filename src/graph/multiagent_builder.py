@@ -4,6 +4,9 @@
 from typing import Dict, List
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
+import json
+import time
+import logging
 
 from src.agents.agents import (
     context_analyzer_agent,
@@ -18,31 +21,279 @@ from src.agents.agents import (
     human_interaction_agent,
 )
 
+from src.database import init_db_connection, get_db_service
 from .types import State
+
+# 初始化数据库连接
+init_db_connection()
+
+
+def _truncate_for_logging(data, max_length=1000):
+    """截断过长的数据用于日志记录"""
+    if not isinstance(data, str):
+        try:
+            data_str = json.dumps(data, ensure_ascii=False)
+        except:
+            data_str = str(data)
+    else:
+        data_str = data
+    
+    if len(data_str) > max_length:
+        return data_str[:max_length] + f"... [截断，完整长度: {len(data_str)}]"
+    return data_str
+
+
+def _log_node_execution(logger, node_name, state, agent_type, invoke_method=None):
+    """记录节点执行的详细日志
+    
+    Args:
+        logger: 日志记录器
+        node_name: 节点名称
+        state: 当前状态
+        agent_type: 智能体类型
+        invoke_method: 调用方法，"invoke"或None表示直接调用
+    """
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    
+    # 获取相关状态信息
+    objective_id = state.get("objective_id", "未指定")
+    task_id = None
+    if "current_task" in state and "id" in state["current_task"]:
+        task_id = state["current_task"]["id"]
+    elif "task_id" in state:
+        task_id = state["task_id"]
+    
+    # 记录详细的节点执行信息
+    logger.info(f"============= 开始执行节点 {node_name} =============")
+    logger.info(f"执行时间: {timestamp}")
+    logger.info(f"智能体类型: {agent_type}")
+    logger.info(f"调用方法: {'invoke方法' if invoke_method else '直接调用'}")
+    logger.info(f"目标ID: {objective_id}")
+    logger.info(f"任务ID: {task_id}")
+    
+    # 记录详细的输入状态，但截断过长内容
+    filtered_state = {k: v for k, v in state.items() if not k.startswith('_')}
+    logger.debug(f"输入状态: {_truncate_for_logging(filtered_state)}")
+
+
+def _log_node_result(logger, node_name, result, duration_ms):
+    """记录节点执行结果的详细日志
+    
+    Args:
+        logger: 日志记录器
+        node_name: 节点名称
+        result: 执行结果
+        duration_ms: 执行时间（毫秒）
+    """
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    
+    logger.info(f"============= 完成执行节点 {node_name} =============")
+    logger.info(f"完成时间: {timestamp}")
+    logger.info(f"执行耗时: {duration_ms}ms")
+    
+    # 记录详细的结果，但截断过长内容
+    logger.debug(f"执行结果: {_truncate_for_logging(result)}")
 
 
 def _context_analyzer_node(state: State):
     """上下文分析节点"""
-    # 调用上下文分析智能体
-    return context_analyzer_agent(state)
+    try:
+        # 添加当前节点名称到状态中，用于数据库记录
+        state["current_node"] = "context_analyzer"
+        
+        # 添加类型检查，确保context_analyzer_agent是可调用对象或有invoke方法
+        agent_type = type(context_analyzer_agent).__name__
+        
+        # 添加更详细的日志记录
+        import logging
+        logger = logging.getLogger("deerflow.context_analyzer")
+        
+        # 记录节点开始执行的详细日志
+        _log_node_execution(logger, "context_analyzer", state, agent_type)
+        
+        # 记录开始时间（用于计算执行时间）
+        start_time = time.time()
+        
+        if not callable(context_analyzer_agent) and not hasattr(context_analyzer_agent, 'invoke'):
+            logger.error(f"错误：context_analyzer_agent既不是可调用对象也没有invoke方法，实际类型是: {agent_type}")
+            raise TypeError(f"上下文分析智能体不是可调用对象且没有invoke方法，无法执行。类型：{agent_type}")
+        
+        # 根据智能体类型选择调用方式
+        if hasattr(context_analyzer_agent, 'invoke'):
+            logger.info("使用invoke方法调用智能体")
+            result = context_analyzer_agent.invoke(state)
+        else:
+            logger.info("直接调用智能体")
+            result = context_analyzer_agent(state)
+        
+        # 计算执行时间
+        duration_ms = int((time.time() - start_time) * 1000)
+        
+        # 记录节点执行结果的详细日志
+        _log_node_result(logger, "context_analyzer", result, duration_ms)
+        
+        # 从数据库获取数据库服务实例
+        db_service = get_db_service()
+        
+        # 保存上下文分析结果到数据库
+        if "objective_id" in result and "context_analysis" in result:
+            db_service.save_context_analysis_result(
+                objective_id=result["objective_id"],
+                llm_response=result["context_analysis"]
+            )
+        
+        return result
+    except Exception as e:
+        import traceback
+        import logging
+        import inspect
+        import sys
+        import json
+        
+        # 获取当前函数名
+        current_func = inspect.currentframe().f_code.co_name
+        
+        # 获取错误发生的具体文件名和行号
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        tb = traceback.extract_tb(exc_traceback)
+        error_file = tb[-1].filename
+        error_line = tb[-1].lineno
+        error_func = tb[-1].name
+        
+        # 获取错误发生时的局部变量
+        local_vars = inspect.trace()[-1][0].f_locals
+        relevant_vars = {k: str(v) for k, v in local_vars.items() if not k.startswith('__')}
+        
+        # 构建详细的错误信息
+        error_msg = f"""上下文分析节点错误报告:
+----------------------------------------
+错误类型: {exc_type.__name__}
+错误信息: {str(e)}
+错误位置:
+  - 文件: {error_file}
+  - 行号: {error_line}
+  - 函数: {error_func}
+  - 调用链: {current_func}
+
+局部变量状态:
+{json.dumps(relevant_vars, ensure_ascii=False, indent=2)}
+
+完整堆栈跟踪:
+{traceback.format_exc()}
+----------------------------------------"""
+        
+        # 记录错误信息
+        logger = logging.getLogger("deerflow.context_analyzer")
+        logger.error(error_msg)
+        
+        # 重新抛出异常，保持原有行为
+        raise
 
 
 def _objective_decomposer_node(state: State):
     """目标分解节点"""
-    # 调用目标分解智能体
-    return objective_decomposer_agent(state)
+    # 添加当前节点名称到状态中，用于数据库记录
+    state["current_node"] = "objective_decomposer"
+    
+    # 添加类型检查，确保objective_decomposer_agent是可调用对象或有invoke方法
+    agent_type = type(objective_decomposer_agent).__name__
+    
+    # 添加更详细的日志记录
+    import logging
+    logger = logging.getLogger("deerflow.objective_decomposer")
+    logger.info(f"正在执行目标分解，智能体类型: {agent_type}")
+    
+    if not callable(objective_decomposer_agent) and not hasattr(objective_decomposer_agent, 'invoke'):
+        logger.error(f"错误：objective_decomposer_agent既不是可调用对象也没有invoke方法，实际类型是: {agent_type}")
+        raise TypeError(f"目标分解智能体不是可调用对象且没有invoke方法，无法执行。类型：{agent_type}")
+    
+    # 根据智能体类型选择调用方式
+    if hasattr(objective_decomposer_agent, 'invoke'):
+        logger.info("使用invoke方法调用智能体")
+        result = objective_decomposer_agent.invoke(state)
+    else:
+        logger.info("直接调用智能体")
+        result = objective_decomposer_agent(state)
+    
+    # 获取数据库服务实例
+    db_service = get_db_service()
+    
+    # 保存目标分解结果到数据库
+    if "objectives" in result:
+        objective_ids = db_service.save_objective_decomposer_result(result["objectives"])
+        # 将目标ID添加到状态中以供后续节点使用
+        if objective_ids and len(objective_ids) > 0:
+            result["objective_id"] = objective_ids[0]
+    
+    return result
 
 
 def _task_analyzer_node(state: State):
     """任务分析节点"""
-    # 调用任务分析智能体
-    return task_analyzer_agent(state)
+    # 添加当前节点名称到状态中，用于数据库记录
+    state["current_node"] = "task_analyzer"
+    
+    # 添加类型检查，确保task_analyzer_agent是可调用对象或有invoke方法
+    agent_type = type(task_analyzer_agent).__name__
+    
+    # 添加更详细的日志记录
+    import logging
+    logger = logging.getLogger("deerflow.task_analyzer")
+    logger.info(f"正在执行任务分析，智能体类型: {agent_type}")
+    
+    if not callable(task_analyzer_agent) and not hasattr(task_analyzer_agent, 'invoke'):
+        logger.error(f"错误：task_analyzer_agent既不是可调用对象也没有invoke方法，实际类型是: {agent_type}")
+        raise TypeError(f"任务分析智能体不是可调用对象且没有invoke方法，无法执行。类型：{agent_type}")
+    
+    # 根据智能体类型选择调用方式
+    if hasattr(task_analyzer_agent, 'invoke'):
+        logger.info("使用invoke方法调用智能体")
+        result = task_analyzer_agent.invoke(state)
+    else:
+        logger.info("直接调用智能体")
+        result = task_analyzer_agent(state)
+    
+    # 获取数据库服务实例
+    db_service = get_db_service()
+    
+    # 保存任务分析结果到数据库
+    if "objective_id" in result and "tasks" in result:
+        task_results = db_service.save_task_analyzer_result(
+            objective_id=result["objective_id"],
+            llm_response=result["tasks"]
+        )
+        # 将任务ID和步骤ID添加到状态中以供后续节点使用
+        if task_results:
+            result["task_ids"] = task_results.get("task_ids", [])
+            result["step_ids"] = task_results.get("step_ids", [])
+    
+    return result
 
 
 def _sufficiency_evaluator_node(state: State):
     """充分性评估节点"""
-    # 调用充分性评估智能体
-    result = sufficiency_evaluator_agent(state)
+    # 添加当前节点名称到状态中，用于数据库记录
+    state["current_node"] = "sufficiency_evaluator"
+    
+    # 添加类型检查，确保sufficiency_evaluator_agent是可调用对象或有invoke方法
+    agent_type = type(sufficiency_evaluator_agent).__name__
+    
+    # 添加更详细的日志记录
+    import logging
+    logger = logging.getLogger("deerflow.sufficiency_evaluator")
+    logger.info(f"正在执行充分性评估，智能体类型: {agent_type}")
+    
+    if not callable(sufficiency_evaluator_agent) and not hasattr(sufficiency_evaluator_agent, 'invoke'):
+        logger.error(f"错误：sufficiency_evaluator_agent既不是可调用对象也没有invoke方法，实际类型是: {agent_type}")
+        raise TypeError(f"充分性评估智能体不是可调用对象且没有invoke方法，无法执行。类型：{agent_type}")
+    
+    # 根据智能体类型选择调用方式
+    if hasattr(sufficiency_evaluator_agent, 'invoke'):
+        logger.info("使用invoke方法调用智能体")
+        result = sufficiency_evaluator_agent.invoke(state)
+    else:
+        logger.info("直接调用智能体")
+        result = sufficiency_evaluator_agent(state)
     
     # 如果评估为充分，准备并行研究任务
     if result.get("is_sufficient", False):
@@ -63,6 +314,21 @@ def _sufficiency_evaluator_node(state: State):
 
 def _research_agent_node(state: State):
     """研究智能体节点，支持并行执行多个研究任务"""
+    # 添加当前节点名称到状态中，用于数据库记录
+    state["current_node"] = "research_agent"
+    
+    # 添加类型检查，确保research_agent是可调用对象或有invoke方法
+    agent_type = type(research_agent).__name__
+    
+    # 添加更详细的日志记录
+    import logging
+    logger = logging.getLogger("deerflow.research_agent")
+    logger.info(f"正在执行研究任务，智能体类型: {agent_type}")
+    
+    if not callable(research_agent) and not hasattr(research_agent, 'invoke'):
+        logger.error(f"错误：research_agent既不是可调用对象也没有invoke方法，实际类型是: {agent_type}")
+        raise TypeError(f"研究智能体不是可调用对象且没有invoke方法，无法执行。类型：{agent_type}")
+    
     # 获取当前任务
     pending_tasks = state.get("pending_research_tasks", [])
     current_index = state.get("current_task_index", 0)
@@ -86,11 +352,19 @@ def _research_agent_node(state: State):
         
         for task in tasks_to_process:
             # 对每个任务调用研究智能体
-            result = research_agent({
+            task_state = {
                 **state, 
                 "current_task": task,
                 "task_id": task.get("id", f"task-{len(completed_tasks)}")
-            })
+            }
+            
+            # 根据智能体类型选择调用方式
+            if hasattr(research_agent, 'invoke'):
+                logger.info(f"使用invoke方法调用研究智能体处理任务: {task.get('id', 'unknown')}")
+                result = research_agent.invoke(task_state)
+            else:
+                logger.info(f"直接调用研究智能体处理任务: {task.get('id', 'unknown')}")
+                result = research_agent(task_state)
             
             # 保存结果
             completed_tasks.append({
@@ -107,13 +381,21 @@ def _research_agent_node(state: State):
     else:
         # 单任务顺序执行模式
         # 调用研究智能体处理当前任务
-        result = research_agent({
+        task_state = {
             **state, 
             "current_task": current_task,
             "task_id": current_task.get("id", f"task-{current_index}")
-        })
+        }
         
-        # 更新完成的任务列表和当前任务索引
+        # 根据智能体类型选择调用方式
+        if hasattr(research_agent, 'invoke'):
+            logger.info(f"使用invoke方法调用研究智能体处理任务: {current_task.get('id', 'unknown')}")
+            result = research_agent.invoke(task_state)
+        else:
+            logger.info(f"直接调用研究智能体处理任务: {current_task.get('id', 'unknown')}")
+            result = research_agent(task_state)
+        
+        # 将当前任务添加到已完成任务列表
         completed_tasks = state.get("completed_research_tasks", [])
         completed_tasks.append({
             "task": current_task,
@@ -123,7 +405,6 @@ def _research_agent_node(state: State):
         # 更新状态
         return {
             **state,
-            **result,
             "completed_research_tasks": completed_tasks,
             "current_task_index": current_index + 1
         }
@@ -131,6 +412,9 @@ def _research_agent_node(state: State):
 
 def _process_research_results(state: State):
     """处理所有研究结果，支持并行任务的结果整合"""
+    # 添加当前节点名称到状态中，用于数据库记录
+    state["current_node"] = "processing_agent"
+    
     # 收集所有已完成的研究任务结果
     completed_tasks = state.get("completed_research_tasks", [])
     
@@ -167,6 +451,9 @@ def _process_research_results(state: State):
 
 def _quality_evaluator_node(state: State):
     """质量评估节点 - 对应流程图中的完成度评估智能体"""
+    # 添加当前节点名称到状态中，用于数据库记录
+    state["current_node"] = "quality_evaluator"
+    
     # 获取当前评估的研究任务
     current_task_index = state.get("current_task_index", 0) - 1  # 获取刚刚完成的任务索引
     completed_tasks = state.get("completed_research_tasks", [])
@@ -221,12 +508,17 @@ def _quality_evaluator_node(state: State):
 
 def _synthesis_agent_node(state: State):
     """合成智能体节点"""
+    # 添加当前节点名称到状态中，用于数据库记录
+    state["current_node"] = "synthesis_agent"
     # 调用合成智能体
     return synthesis_agent(state)
 
 
 def _error_handler_node(state: State):
     """错误处理节点，负责处理工作流执行过程中的错误和异常"""
+    # 添加当前节点名称到状态中，用于数据库记录
+    state["current_node"] = "error_handler"
+    
     # 获取错误信息
     error = state.get("error", {})
     error_type = error.get("type", "unknown")
@@ -363,12 +655,17 @@ def _wrap_node_with_error_handling(node_func):
 
 def _human_interaction_node(state: State):
     """人机交互节点"""
+    # 添加当前节点名称到状态中，用于数据库记录
+    state["current_node"] = "human_interaction"
     # 调用人机交互智能体
     return human_interaction_agent(state)
 
 
 def _user_feedback_node(state: State):
     """用户反馈节点，处理用户对最终结果的反馈"""
+    # 添加当前节点名称到状态中，用于数据库记录
+    state["current_node"] = "user_feedback"
+    
     from langgraph.types import interrupt
     
     # 向用户展示最终报告
@@ -392,6 +689,9 @@ def _user_feedback_node(state: State):
 
 def _handle_user_feedback(state: State):
     """处理用户反馈"""
+    # 添加当前节点名称到状态中，用于数据库记录
+    state["current_node"] = "handle_feedback"
+    
     # 获取用户反馈
     user_feedback = state.get("user_feedback", {})
     feedback_type = user_feedback.get("type", "")
@@ -575,10 +875,20 @@ def _build_multiagent_graph():
     ]:
         builder.add_conditional_edges(
             node_name,
-            lambda state: "error_handler" if state.get("error") else "next",
+            lambda state: "error_handler" if state.get("error") else node_name,
             {
                 "error_handler": "error_handler",
-                "next": None  # 使用None表示继续正常流程
+                "context_analyzer": "context_analyzer",
+                "objective_decomposer": "objective_decomposer",
+                "task_analyzer": "task_analyzer",
+                "sufficiency_evaluator": "sufficiency_evaluator",
+                "research_agent": "research_agent",
+                "processing_agent": "processing_agent",
+                "quality_evaluator": "quality_evaluator",
+                "synthesis_agent": "synthesis_agent",
+                "human_interaction": "human_interaction",
+                "user_feedback": "user_feedback",
+                "handle_feedback": "handle_feedback"
             }
         )
     
@@ -618,4 +928,4 @@ def build_multiagent_graph_with_memory():
     builder = _build_multiagent_graph()
     
     # 编译并返回
-    return builder.compile(checkpointer=memory) 
+    return builder.compile(checkpointer=memory)

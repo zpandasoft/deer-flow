@@ -35,8 +35,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--port",
         type=int,
-        default=8000,
-        help="Port to bind the server to (default: 8000)",
+        default=8001,
+        help="Port to bind the server to (default: 8001)",
     )
     parser.add_argument(
         "--log-level",
@@ -57,7 +57,7 @@ if __name__ == "__main__":
 
     logger.info("Starting DeerFlow API server")
     uvicorn.run(
-        "src.taskflow.api:app",
+        "src.server.app:app",
         host=args.host,
         port=args.port,
         reload=reload,

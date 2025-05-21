@@ -1,6 +1,7 @@
 # Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 # SPDX-License-Identifier: MIT
 
+import os
 from .tools import SEARCH_MAX_RESULTS, SELECTED_SEARCH_ENGINE, SearchEngine
 from .loader import load_yaml_config
 from .questions import BUILT_IN_QUESTIONS, BUILT_IN_QUESTIONS_ZH_CN
@@ -9,6 +10,17 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# MySQL数据库配置
+def get_db_config():
+    """获取MySQL数据库配置，优先从环境变量加载，如无则使用默认值"""
+    return {
+        "host": os.getenv("DB_HOST", "localhost"),
+        "user": os.getenv("DB_USER", "deerflow"),
+        "password": os.getenv("DB_PASSWORD", "deerflow_password"),
+        "database": os.getenv("DB_DATABASE", "deerflow"),
+        "port": int(os.getenv("DB_PORT", "3306"))
+    }
 
 # Team configuration
 TEAM_MEMBER_CONFIGRATIONS = {
@@ -47,4 +59,5 @@ __all__ = [
     "SearchEngine",
     "BUILT_IN_QUESTIONS",
     "BUILT_IN_QUESTIONS_ZH_CN",
+    "get_db_config",
 ]

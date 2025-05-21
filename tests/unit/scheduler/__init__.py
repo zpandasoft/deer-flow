@@ -2,7 +2,5 @@
 # SPDX-License-Identifier: MIT
 
 """
-TaskFlow工具函数模块。
-
-提供通用工具函数和辅助类。
+TaskFlow调度器测试包。
 """ 

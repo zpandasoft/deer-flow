@@ -12,9 +12,11 @@ from src.tools import (
 
 from src.llms.llm import get_llm_by_type
 from src.config.agents import AGENT_LLM_MAP
+from .decorators import wrap_create_agent
 
 
 # Create agents using configured LLM types
+@wrap_create_agent
 def create_agent(agent_name: str, agent_type: str, tools: list, prompt_template: str):
     """Factory function to create agents with consistent configuration."""
     return create_react_agent(

@@ -27,10 +27,13 @@ class MultiAgentStreamController:
     
     def __init__(self):
         """初始化控制器"""
-        # 初始化多智能体工作流图
-        self.graph = build_multiagent_graph_with_memory()
+        # 初始化多智能体工作流图，使用workflow_graph而不是graph作为变量名
+        # 这样可以避免与导入的context_analyzer_agent等名称冲突
+        self.workflow_graph = build_multiagent_graph_with_memory()
         # 创建事件队列
         self.event_queue = asyncio.Queue()
+        # 记录初始化成功信息
+        logger.info("多智能体流控制器初始化成功，工作流图构建完成")
     
     async def _convert_workflow_event(self, agent: List[str], event_data: Any) -> Dict:
         """将工作流事件转换为API事件"""
@@ -200,7 +203,7 @@ class MultiAgentStreamController:
         # 流式处理
         try:
             # 使用astream API流式执行工作流
-            async for agent, _, event_data in self.graph.astream(
+            async for agent, _, event_data in self.workflow_graph.astream(
                 input_,
                 config=config,
                 stream_mode=["messages", "updates"],
@@ -208,14 +211,13 @@ class MultiAgentStreamController:
             ):
                 # 转换事件
                 event_info = await self._convert_workflow_event(agent, event_data)
-                
                 # 生成事件字符串
                 yield _make_event(event_info["type"], event_info["data"])
                 
         except Exception as e:
-            logger.error(f"多智能体工作流执行错误: {str(e)}")
+            logger.error(f"多智能体工作流执行错误: {str(e)}, 文件: {__file__}, 行号: {e.__traceback__.tb_lineno}")
             # 发送错误事件
             yield _make_event("error", {
                 "message": f"工作流执行错误: {str(e)}",
                 "thread_id": thread_id,
-            }) 
+            })

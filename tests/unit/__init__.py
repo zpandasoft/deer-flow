@@ -2,7 +2,5 @@
 # SPDX-License-Identifier: MIT
 
 """
-TaskFlow数据库模块。
-
-提供数据模型定义和数据库操作服务。
+TaskFlow单元测试包。
 """ 
