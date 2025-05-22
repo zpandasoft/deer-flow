@@ -34,7 +34,7 @@ from langgraph.types import interrupt
 
 
 # 初始化日志记录器
-logger = logging.getLogger("deerflow.multiagent_builder")
+logger = logging.getLogger("graph.multiagent_builder")
 
 # 初始化数据库连接
 init_db_connection()
@@ -187,17 +187,14 @@ def _task_analyzer_node(state: State):
     """任务分析节点"""
     # 添加当前节点名称到状态中，用于数据库记录
     state["current_node"] = "task_analyzer"
-    
+    # objectives=state["objectives"]
     # 添加显式调试日志
-    logger.info(f"任务分析节点开始执行，准备分析目标任务{state}")
+    logger.info(f"任务分析节点开始执行，准备分析目标任务")
     
     # 记录当前要分析的目标
     if "objective_id" in state:
         logger.info(f"当前分析的目标ID: {state['objective_id']}")
 
-    feedback = interrupt(f"以下是最终报告，请提供反馈:\n\n{final_report}")
-
-    
     # 调用任务分析智能体
     result = task_analyzer_agent(state)
     
@@ -560,7 +557,7 @@ def _synthesis_agent_node(state: State):
     
     # 获取数据库服务实例
     db_service = get_db_service()
-    
+
     # 调用合成智能体
     result = synthesis_agent(state)
     
@@ -935,42 +932,42 @@ def _build_multiagent_graph():
     
     # 错误处理路径 - 条件路由
     # 为所有节点添加错误处理条件边
-    for node_name in [
-        "context_analyzer", "objective_decomposer", "task_analyzer", 
-        "sufficiency_evaluator", "research_agent", "processing_agent", 
-        "quality_evaluator", "synthesis_agent", "human_interaction",
-        "user_feedback", "handle_feedback"
-    ]:
-        builder.add_conditional_edges(
-            node_name,
-            lambda state: "error_handler" if state.get("error") else node_name,
-            {
-                "error_handler": "error_handler",
-                "context_analyzer": "context_analyzer",
-                "objective_decomposer": "objective_decomposer",
-                "task_analyzer": "task_analyzer",
-                "sufficiency_evaluator": "sufficiency_evaluator",
-                "research_agent": "research_agent",
-                "processing_agent": "processing_agent",
-                "quality_evaluator": "quality_evaluator",
-                "synthesis_agent": "synthesis_agent",
-                "human_interaction": "human_interaction",
-                "user_feedback": "user_feedback",
-                "handle_feedback": "handle_feedback"
-            }
-        )
+    # for node_name in [
+    #     "context_analyzer", "objective_decomposer", "task_analyzer", 
+    #     "sufficiency_evaluator", "research_agent", "processing_agent", 
+    #     "quality_evaluator", "synthesis_agent", "human_interaction",
+    #     "user_feedback", "handle_feedback"
+    # ]:
+    #     builder.add_conditional_edges(
+    #         node_name,
+    #         lambda state: "error_handler" if state.get("error") else node_name,
+    #         {
+    #             "error_handler": "error_handler",
+    #             "context_analyzer": "context_analyzer",
+    #             "objective_decomposer": "objective_decomposer",
+    #             "task_analyzer": "task_analyzer",
+    #             "sufficiency_evaluator": "sufficiency_evaluator",
+    #             "research_agent": "research_agent",
+    #             "processing_agent": "processing_agent",
+    #             "quality_evaluator": "quality_evaluator",
+    #             "synthesis_agent": "synthesis_agent",
+    #             "human_interaction": "human_interaction",
+    #             "user_feedback": "user_feedback",
+    #             "handle_feedback": "handle_feedback"
+    #         }
+    #     )
     
-    # 错误处理节点的恢复路径
-    builder.add_conditional_edges(
-        "error_handler",
-        _determine_error_recovery_path,
-        {
-            "research_agent": "research_agent",
-            "processing_agent": "processing_agent",
-            "human_interaction": "human_interaction",
-            "context_analyzer": "context_analyzer"
-        }
-    )
+    # # 错误处理节点的恢复路径
+    # builder.add_conditional_edges(
+    #     "error_handler",
+    #     _determine_error_recovery_path,
+    #     {
+    #         "research_agent": "research_agent",
+    #         "processing_agent": "processing_agent",
+    #         "human_interaction": "human_interaction",
+    #         "context_analyzer": "context_analyzer"
+    #     }
+    # )
     
     # 人机交互后回到上下文分析
     builder.add_edge("human_interaction", "context_analyzer")
