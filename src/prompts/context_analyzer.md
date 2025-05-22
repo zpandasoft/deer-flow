@@ -78,7 +78,7 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 
 # 输出格式
 
-请提供JSON格式的分析结果，确保符合以下结构：
+请提供JSON格式的分析结果，确保符合以下结构,不要显示```json以及```：
 
 ```json
 {

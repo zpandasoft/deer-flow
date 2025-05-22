@@ -6,7 +6,7 @@ import json
 import logging
 import re
 import traceback
-from typing import Dict, List
+from typing import Dict, List, Literal
 
 # 第三方库导入
 from langgraph.graph import StateGraph, START, END
@@ -29,8 +29,7 @@ from src.agents.patch_context_analyzer import mock_context_analyzer_agent
 from src.database import init_db_connection, get_db_service
 from src.tools import web_search_tool
 from .types import State
-from langgraph.types import interrupt
-
+from langgraph.types import Command, interrupt
 
 
 # 初始化日志记录器
@@ -82,6 +81,9 @@ def _context_analyzer_node(state: State):
             logger.info(f"检测到需要网络搜索，共有{len(search_questions)}个搜索问题")
             search_results = []
             
+            # 记录当前使用的搜索工具类型
+            logger.info(f"使用的搜索工具: {web_search_tool.__class__.__name__} 类型: {type(web_search_tool)}")
+            
             # 对每个搜索问题执行搜索
             for question in search_questions:
                 query = question.get("question", "")
@@ -90,6 +92,7 @@ def _context_analyzer_node(state: State):
                     try:
                         # 调用网络搜索工具
                         search_result = web_search_tool.invoke(query)
+                        # search_result = "test"
                         search_results.append({
                             "query": query,
                             "result": search_result
@@ -152,7 +155,7 @@ objective_decomposer_result = {
 }
 
 
-def _objective_decomposer_node(state: State):
+def _objective_decomposer_node(state: State) :
     """目标分解节点"""
     # 添加当前节点名称到状态中，用于数据库记录
     state["current_node"] = "objective_decomposer"
@@ -160,60 +163,141 @@ def _objective_decomposer_node(state: State):
     # 添加显式调试日志
     logger.info("目标分解节点开始执行，准备分解研究目标")
     
-    # result = objective_decomposer_agent(state)
-    result = objective_decomposer_result
+    result = objective_decomposer_agent(state)
+    # result = objective_decomposer_result
     
-    # 记录分解结果
-    if "research_question" in result:
-        logger.info(f"研究问题: {result['research_question']}")
-    if "decomposition_approach" in result:
-        logger.info(f"分解方法: {result['decomposition_approach']}")
+    # 从AIMessage中提取JSON内容
+    objectives = []
+    if "messages" in result:
+        for message in result["messages"]:
+            if hasattr(message, "content") and message.content:
+                # 尝试从消息内容中提取JSON
+                try:
+                    content_json = json.loads(message.content)
+                    # 提取objectives数组
+                    if "objectives" in content_json:
+                        objectives = content_json["objectives"]
+                        logger.info(f"从AIMessage中成功提取objectives数组，长度: {len(objectives)}")
+                        break
+                except json.JSONDecodeError as e:
+                    logger.warning(f"无法解析消息中的JSON内容: {e}")
+    
+    # 如果从AIMessage中没有提取到objectives，尝试从result中直接获取
+    if not objectives and "objectives" in result:
+        objectives = result.get("objectives", [])
+        logger.info(f"从result中直接获取objectives数组，长度: {len(objectives)}")
+
     
     # 获取数据库服务实例
     db_service = get_db_service()
     
     # 保存目标分解结果到数据库
-    if "objectives" in result:
-        logger.info(f"目标分解结果: {result['objectives']}")
-        objective_ids = db_service.save_objective_decomposer_result(result["objectives"])
-        # 将目标ID添加到状态中以供后续节点使用
-        if objective_ids and len(objective_ids) > 0:
-            result["objective_id"] = objective_ids[0]
+    if objectives:
+        logger.info(f"目标分解结果: {objectives}")
+        objective_ids = db_service.save_objective_decomposer_result(objectives)
     
-    return result
+    # 额外日志确认数据传递
+    logger.info(f"离开目标分解节点，objectives列表长度: {len(objectives)}")
+    return {
+        **state,
+        "objectives": objectives
+    }
 
 
 def _task_analyzer_node(state: State):
     """任务分析节点"""
     # 添加当前节点名称到状态中，用于数据库记录
     state["current_node"] = "task_analyzer"
-    # objectives=state["objectives"]
     # 添加显式调试日志
     logger.info(f"任务分析节点开始执行，准备分析目标任务")
-    
-    # 记录当前要分析的目标
-    if "objective_id" in state:
-        logger.info(f"当前分析的目标ID: {state['objective_id']}")
-
-    # 调用任务分析智能体
-    result = task_analyzer_agent(state)
+    objectives = state.get("objectives", [])
+    # 初始化结果集合
+    combined_tasks = []
+    combined_task_ids = []
+    combined_step_ids = []
+    all_results = {}
     
     # 获取数据库服务实例
     db_service = get_db_service()
     
-    # 保存任务分析结果到数据库
-    if "objective_id" in result and "tasks" in result:
-        logger.info(f"任务分析结果: {result['tasks']}")
-        task_results = db_service.save_task_analyzer_result(
-            objective_id=result["objective_id"],
-            llm_response=result["tasks"]
-        )
-        # 将任务ID和步骤ID添加到状态中以供后续节点使用
-        if task_results:
-            result["task_ids"] = task_results.get("task_ids", [])
-            result["step_ids"] = task_results.get("step_ids", [])
+    # 检查目标列表是否为空
+    if not objectives:
+        logger.warning("目标列表为空，无法执行任务分析")
+        return {
+            **state,
+            "tasks": [],
+            "task_ids": [],
+            "step_ids": [],
+            "objective_results": {},
+            "objectives_processed": 0,
+            "error": {
+                "type": "empty_objectives",
+                "message": "目标列表为空，无法执行任务分析"
+            }
+        }
     
-    return result
+    # 循环处理每个目标
+    logger.info(f"共需处理 {len(objectives)} 个目标")
+    for index, objective in enumerate(objectives):
+        objective_id = objective.get("objective_id")
+        
+        # 检查目标ID是否有效
+        if not objective_id:
+            logger.warning(f"目标 #{index+1} 没有有效的objective_id，将使用索引作为ID")
+            objective_id = f"obj-{index+1}"
+            objective["objective_id"] = objective_id
+        
+        logger.info(f"处理第 {index+1}/{len(objectives)} 个目标: {objective_id}")
+        
+        # 创建包含当前目标的子状态
+        objective_state = {
+            **state,
+            "current_objective": objective,
+            "objective_id": objective_id
+        }
+        
+        # 调用任务分析智能体
+        result = task_analyzer_agent(objective_state)
+        
+        # 保存任务分析结果到数据库
+        if "objective_id" in result and "tasks" in result:
+            logger.info(f"任务分析结果: {result['tasks']}")
+            task_results = db_service.save_task_analyzer_result(
+                objective_id=result["objective_id"],
+                llm_response=result["tasks"]
+            )
+            # 收集任务和ID信息
+            if task_results:
+                task_ids = task_results.get("task_ids", [])
+                step_ids = task_results.get("step_ids", [])
+                combined_task_ids.extend(task_ids)
+                combined_step_ids.extend(step_ids)
+            
+            # 收集任务
+            if "tasks" in result:
+                tasks = result["tasks"]
+                if isinstance(tasks, list):
+                    combined_tasks.extend(tasks)
+                else:
+                    combined_tasks.append(tasks)
+            
+            # 将当前目标的完整结果存储起来
+            all_results[objective_id] = result
+    
+    # 构建综合结果
+    combined_result = {
+        **state,
+        "tasks": combined_tasks,
+        "task_ids": combined_task_ids,
+        "step_ids": combined_step_ids,
+        "objective_results": all_results,
+        "objectives_processed": len(all_results)
+    }
+    
+    # 记录处理结果
+    logger.info(f"任务分析节点完成，共处理了 {len(all_results)} 个目标，生成了 {len(combined_tasks)} 个任务")
+    
+    return combined_result
 
 
 def _sufficiency_evaluator_node(state: State):
@@ -264,6 +348,10 @@ def _sufficiency_evaluator_node(state: State):
         
         if search_questions:
             search_results = []
+            
+            # 记录当前使用的搜索工具类型
+            logger.info(f"使用的搜索工具: {web_search_tool.__class__.__name__} 类型: {type(web_search_tool)}")
+            
             for question in search_questions:
                 query = question.get("question", "")
                 if query:
@@ -859,9 +947,9 @@ def _build_multiagent_graph():
     builder = StateGraph(State)
     
     # 添加所有节点 - 使用错误处理包装
-    builder.add_node("context_analyzer", _wrap_node_with_error_handling(_context_analyzer_node))
-    builder.add_node("objective_decomposer", _wrap_node_with_error_handling(_objective_decomposer_node))
-    builder.add_node("task_analyzer", _wrap_node_with_error_handling(_task_analyzer_node))
+    builder.add_node("context_analyzer", _context_analyzer_node)
+    builder.add_node("objective_decomposer", (_objective_decomposer_node))
+    builder.add_node("task_analyzer", (_task_analyzer_node))
     builder.add_node("sufficiency_evaluator", _wrap_node_with_error_handling(_sufficiency_evaluator_node))
     builder.add_node("research_agent", _wrap_node_with_error_handling(_research_agent_node))
     builder.add_node("processing_agent", _wrap_node_with_error_handling(_process_research_results))
@@ -880,36 +968,38 @@ def _build_multiagent_graph():
     builder.add_edge("task_analyzer", "sufficiency_evaluator")
     
     # 添加条件边：充分性评估决定下一步
-    builder.add_conditional_edges(
-        "sufficiency_evaluator",
-        _evaluate_sufficiency,
-        {
-            "sufficient": "research_agent",     # 如果任务设计充分，进入研究阶段
-            "insufficient": "task_analyzer"     # 如果任务设计不充分，返回重新设计
-        }
-    )
+    # builder.add_conditional_edges(
+    #     "sufficiency_evaluator",
+    #     _evaluate_sufficiency,
+    #     {
+    #         "sufficient": "research_agent",     # 如果任务设计充分，进入研究阶段
+    #         "insufficient": "task_analyzer"     # 如果任务设计不充分，返回重新设计
+    #     }
+    # )
     
     # 研究阶段的循环和处理阶段
-    builder.add_conditional_edges(
-        "research_agent",
-        _evaluate_research_status,
-        {
-            "in_progress": "quality_evaluator", # 每完成一个研究任务，就进行质量评估
-            "completed": "processing_agent",    # 如果所有研究任务已完成，进入处理阶段
-            "no_tasks": "processing_agent"      # 如果没有待处理的任务，进入处理阶段
-        }
-    )
+    # builder.add_conditional_edges(
+    #     "research_agent",
+    #     _evaluate_research_status,
+    #     {
+    #         "in_progress": "quality_evaluator", # 每完成一个研究任务，就进行质量评估
+    #         "completed": "processing_agent",    # 如果所有研究任务已完成，进入处理阶段
+    #         "no_tasks": "processing_agent"      # 如果没有待处理的任务，进入处理阶段
+    #     }
+    # )
     
-    # 质量评估后的分支
-    builder.add_conditional_edges(
-        "quality_evaluator",
-        _evaluate_quality,
-        {
-            "passed": "research_agent",     # 如果质量评估通过，继续下一个研究任务
-            "failed": "research_agent"      # 如果质量评估不通过，重新执行该研究任务
-        }
-    )
+    # # 质量评估后的分支
+    # builder.add_conditional_edges(
+    #     "quality_evaluator",
+    #     _evaluate_quality,
+    #     {
+    #         "passed": "research_agent",     # 如果质量评估通过，继续下一个研究任务
+    #         "failed": "research_agent"      # 如果质量评估不通过，重新执行该研究任务
+    #     }
+    # )
     
+    builder.add_edge("sufficiency_evaluator", "processing_agent")
+
     # 处理阶段到合成阶段
     builder.add_edge("processing_agent", "synthesis_agent")
     

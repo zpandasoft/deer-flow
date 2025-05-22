@@ -16,5 +16,5 @@ class SearchEngine(enum.Enum):
 
 
 # Tool configuration
-SELECTED_SEARCH_ENGINE = os.getenv("SEARCH_API", SearchEngine.TAVILY.value)
+SELECTED_SEARCH_ENGINE = SearchEngine.DUCKDUCKGO.value  # Force using DuckDuckGo regardless of env var
 SEARCH_MAX_RESULTS = 3

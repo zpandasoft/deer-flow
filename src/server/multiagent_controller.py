@@ -221,6 +221,7 @@ class MultiAgentStreamController:
                 stream_mode=["messages", "updates"],
                 subgraphs=True,
             ):
+                logger.info(f"_astream_multiagent_generator="+agent)
                 # 转换事件
                 event_info = await self._convert_workflow_event(agent, event_data)
                 # 生成事件字符串

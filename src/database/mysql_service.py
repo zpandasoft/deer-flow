@@ -154,6 +154,7 @@ class MySQLService:
                 self.execute_insert('objectives', data)
                 objective_ids.append(objective_id)
         except Exception as e:
+            self.logger.error(f"保存处理结果失败: {str(e)}")
             # 错误时回滚
             if self.connection:
                 self.connection.rollback()
