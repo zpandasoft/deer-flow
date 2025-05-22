@@ -36,12 +36,13 @@ def parse_arguments():
         type=str, 
         nargs="?", 
         default="光伏组件出口法国需要完成哪些合规目标",
-        help="要提交的查询/研究问题"
+        help="要提交的用户消息内容，将作为messages数组中的user消息"
     )
     parser.add_argument(
         "--api-url", 
         type=str, 
-        default="http://localhost:8001/api/v1/multiagent/stream",
+        # default="http://localhost:8000/api/chat/stream",
+         default="http://localhost:8000/api/v1/multiagent/stream",
         help="API端点URL"
     )
     parser.add_argument(
@@ -84,7 +85,7 @@ def parse_arguments():
 def prepare_request(args) -> Dict:
     """准备请求参数"""
     request_data = {
-        "query": args.query,
+        "messages": [{"role": "user", "content": args.query}],
         "thread_id": args.thread_id,
         "locale": args.locale,
         "max_steps": args.max_steps,
@@ -244,10 +245,10 @@ def main():
     
     # 记录请求信息
     logger.info(f"发送请求到: {args.api_url}")
-    logger.info(f"查询: {args.query}")
+    logger.info(f"用户消息: {args.query}")
     
     # 根据参数选择测试方式
-    print(f"开始处理查询: {args.query}\n")
+    print(f"request_data: {request_data}\n")
     if args.use_sse_client:
         try:
             import sseclient

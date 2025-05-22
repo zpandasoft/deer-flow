@@ -4,8 +4,18 @@
 import json
 import logging
 import asyncio
+from src.server.chat_request import (
+    ChatMessage,
+    ChatRequest,
+    GeneratePodcastRequest,
+    GeneratePPTRequest,
+    GenerateProseRequest,
+    MultiAgentStreamRequest,
+    TTSRequest,
+)
 from typing import Dict, AsyncGenerator, Any, List, Optional, cast
 from uuid import uuid4
+import traceback
 
 from langchain_core.messages import AIMessageChunk, ToolMessage
 
@@ -161,9 +171,8 @@ class MultiAgentStreamController:
     
     async def _astream_multiagent_generator(
         self,
-        query: str,
+        messages: List[ChatMessage],
         thread_id: str,
-        locale: str = "zh-CN",
         max_steps: int = 10,
         auto_execute: bool = False,
         interrupt_feedback: Optional[str] = None,
@@ -175,8 +184,8 @@ class MultiAgentStreamController:
         
         # 准备初始状态
         input_ = {
-            "query": query,
-            "locale": locale,
+            # "query": query,
+#             "locale": locale,
             "max_steps": max_steps,
             "auto_execute": auto_execute,
             "additional_context": additional_context or {},
@@ -186,12 +195,15 @@ class MultiAgentStreamController:
             "content_sufficient": False,
             "research_complete": False,
             "current_node": "context_analyzer",
+            "messages": messages  # 添加空的messages列表，确保符合LangGraph要求
         }
         
         # 处理中断恢复
         if not auto_execute and interrupt_feedback:
-            from langgraph.types import Command
-            resume_msg = f"[{interrupt_feedback}] {query}"
+            resume_msg = f"[{interrupt_feedback}]"
+            # add the last message to the resume message
+            if messages:
+                 resume_msg += f" {messages[-1]['content']}"
             input_ = Command(resume=resume_msg)
         
         # 配置
@@ -215,9 +227,18 @@ class MultiAgentStreamController:
                 yield _make_event(event_info["type"], event_info["data"])
                 
         except Exception as e:
-            logger.error(f"多智能体工作流执行错误: {str(e)}, 文件: {__file__}, 行号: {e.__traceback__.tb_lineno}")
+            error_message = str(e)
+            error_traceback = traceback.format_exc()
+            line_number = e.__traceback__.tb_lineno if hasattr(e, '__traceback__') and e.__traceback__ else 'unknown'
+            
+            logger.error(f"多智能体工作流执行错误: {error_message}")
+            logger.error(f"文件: {__file__}, 行号: {line_number}")
+            logger.error(f"堆栈跟踪:\n{error_traceback}")
+            
             # 发送错误事件
             yield _make_event("error", {
-                "message": f"工作流执行错误: {str(e)}",
+                "message": f"工作流执行错误: {error_message}",
                 "thread_id": thread_id,
+                "file": __file__,
+                "line": line_number,
             })

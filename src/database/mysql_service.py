@@ -2,8 +2,12 @@ import uuid
 import json
 import logging
 import pymysql
+import traceback
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Tuple
+
+# 添加新的导入
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 
 class MySQLService:
     """MySQL数据库服务类"""
@@ -84,15 +88,15 @@ class MySQLService:
             'node_name': node_name,
             'reference_id': reference_id,
             'reference_type': reference_type,
-            'input_data': json.dumps(input_data) if isinstance(input_data, (dict, list)) else str(input_data),
-            'output_data': json.dumps(output_data) if isinstance(output_data, (dict, list)) else str(output_data),
+            'input_data': self._serialize_for_database(input_data),
+            'output_data': self._serialize_for_database(output_data),
             'tokens_used': tokens_used,
             'duration_ms': duration_ms,
             'status': status,
             'error_message': error_message,
             'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'model_name': model_name,
-            'metadata': json.dumps(metadata) if metadata else None
+            'metadata': self._serialize_for_database(metadata) if metadata else None
         }
         
         return self.execute_insert('agent_llm_calls', call_data)
@@ -608,3 +612,41 @@ class MySQLService:
             "key_business_drivers": [],
             "business_constraints": []
         }
+
+    def _serialize_for_database(self, obj):
+        """将对象序列化为可保存到数据库的格式
+        
+        Args:
+            obj: 需要序列化的对象
+            
+        Returns:
+            序列化后的对象
+        """
+        if isinstance(obj, (dict, list)):
+            try:
+                # 尝试使用标准json序列化
+                return json.dumps(obj, ensure_ascii=False)
+            except TypeError:
+                # 如果标准序列化失败，使用自定义处理
+                if isinstance(obj, dict):
+                    return json.dumps({k: self._serialize_for_database(v) for k, v in obj.items()}, ensure_ascii=False)
+                elif isinstance(obj, list):
+                    return json.dumps([self._serialize_for_database(item) for item in obj], ensure_ascii=False)
+        elif isinstance(obj, (HumanMessage, AIMessage, SystemMessage, BaseMessage)):
+            # 处理LangChain消息类型
+            message_dict = {
+                "type": obj.__class__.__name__,
+                "content": obj.content
+            }
+            if hasattr(obj, "additional_kwargs") and obj.additional_kwargs:
+                message_dict["additional_kwargs"] = obj.additional_kwargs
+            return json.dumps(message_dict, ensure_ascii=False)
+        elif hasattr(obj, "to_json"):
+            # 处理有to_json方法的对象
+            return obj.to_json()
+        elif hasattr(obj, "__dict__"):
+            # 处理一般Python对象
+            return json.dumps(obj.__dict__, ensure_ascii=False)
+        else:
+            # 最后的备选方案，简单地转换为字符串
+            return str(obj)

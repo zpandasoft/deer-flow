@@ -14,7 +14,7 @@ def setup_db_service(config: Dict):
     global db_service
     db_service = MySQLService(config)
 
-def _truncate_for_logging(data, max_length=1000):
+def _truncate_for_logging(data, max_length=3000):
     """截断过长的数据用于日志记录"""
     if not isinstance(data, str):
         try:
