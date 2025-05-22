@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import os
+import traceback
 from typing import List, cast, Dict, Any
 from uuid import uuid4
 
@@ -343,15 +344,17 @@ async def multiagent_stream(request: ChatRequest):
         "steps": [],
         "content_sufficient": False,
         "research_complete": False,
-        "current_node": "context_analyzer"
+        "current_node": "context_analyzer"  # 确保从context_analyzer开始
     }
     
     # 处理中断恢复
     if not request.auto_accepted_plan and request.interrupt_feedback:
         resume_msg = f"[{request.interrupt_feedback}]"
-        # add the last message to the resume message
         if input_["messages"]:
-            resume_msg += f" {input_['messages'][-1]['content']}"
+            last_message = input_["messages"][-1]
+            resume_msg += f" {last_message['content']}"
+        # 使用Command对象创建适当的中断恢复格式
+        from langgraph.graph import Command
         input_ = Command(resume=resume_msg)
     
     # 配置
@@ -360,37 +363,27 @@ async def multiagent_stream(request: ChatRequest):
         "max_steps": request.max_step_num,
     }
     
-    # 使用SSE响应流式返回结果
+    # 流式处理
     return StreamingResponse(
-        _multiagent_stream_generator(
-            multiagent_graph,
-            input_,
-            config,
-            thread_id
-        ),
-        media_type="text/event-stream",
+        _multiagent_stream_generator(multiagent_graph, input_, config, thread_id),
+        media_type="text/event-stream"
     )
 
-async def _multiagent_stream_generator(
-    graph,
-    input_,
-    config,
-    thread_id
-):
+async def _multiagent_stream_generator(workflow_graph, input_, config, thread_id):
     """多智能体流生成器"""
     try:
         # 使用astream API流式执行工作流
-        async for agent, event_type, event_data in graph.astream(
+        async for agent, _, event_data in workflow_graph.astream(
             input_,
             config=config,
             stream_mode=["messages", "updates"],
             subgraphs=True,
         ):
-            # 转换事件为SSE格式
-            event_info = await _convert_multiagent_event(agent, event_type, event_data, thread_id)
-            yield _make_event(event_info["type"], event_info["data"])
+            # 转换事件
+            event_info = await _convert_multiagent_event(agent, "event", event_data, thread_id)
+            # 生成事件字符串
+            yield f"data: {json.dumps(event_info, ensure_ascii=False)}\n\n"
     except Exception as e:
-        import traceback
         error_message = str(e)
         error_traceback = traceback.format_exc()
         line_number = e.__traceback__.tb_lineno if hasattr(e, '__traceback__') and e.__traceback__ else 'unknown'
@@ -400,12 +393,7 @@ async def _multiagent_stream_generator(
         logger.error(f"堆栈跟踪:\n{error_traceback}")
         
         # 发送错误事件
-        yield _make_event("error", {
-            "message": f"工作流执行错误: {error_message}",
-            "thread_id": thread_id,
-            "file": __file__,
-            "line": line_number,
-        })
+        yield f"data: {json.dumps({'type': 'error', 'data': {'message': f'工作流执行错误: {error_message}', 'thread_id': thread_id, 'file': __file__, 'line': line_number}}, ensure_ascii=False)}\n\n"
 
 async def _convert_multiagent_event(agent, event_type, event_data, thread_id):
     """将工作流事件转换为API事件"""
@@ -427,48 +415,6 @@ async def _convert_multiagent_event(agent, event_type, event_data, thread_id):
                     ],
                 }
             }
-        # 处理目标创建事件
-        elif "objective_created" in event_data:
-            return {
-                "type": "objective_created",
-                "data": event_data["objective_created"]
-            }
-        # 处理任务创建事件
-        elif "task_created" in event_data:
-            return {
-                "type": "task_created",
-                "data": event_data["task_created"]
-            }
-        # 处理步骤创建事件
-        elif "step_created" in event_data:
-            return {
-                "type": "step_created",
-                "data": event_data["step_created"]
-            }
-        # 处理步骤完成事件
-        elif "step_completed" in event_data:
-            return {
-                "type": "step_completed",
-                "data": event_data["step_completed"]
-            }
-        # 处理最终结果事件
-        elif "final_result" in event_data:
-            return {
-                "type": "final_result",
-                "data": event_data["final_result"]
-            }
-        # 处理错误事件
-        elif "error" in event_data:
-            return {
-                "type": "error",
-                "data": event_data["error"]
-            }
-        # 处理进度更新事件
-        elif "progress_update" in event_data:
-            return {
-                "type": "progress_update",
-                "data": event_data["progress_update"]
-            }
         # 处理其他字典类型事件
         return {
             "type": "state_update",
@@ -477,56 +423,34 @@ async def _convert_multiagent_event(agent, event_type, event_data, thread_id):
     
     # 处理消息类型事件
     try:
-        message_chunk, message_metadata = cast(
-            tuple[AIMessageChunk, Dict[str, Any]], event_data
-        )
-        
-        # 构建基本事件消息
-        agent_name = agent[0].split(":")[0] if agent and len(agent) > 0 else "unknown"
-        event_stream_message = {
-            "thread_id": thread_id,
-            "agent": agent_name,
-            "id": message_chunk.id if hasattr(message_chunk, "id") else str(uuid4()),
-            "role": "assistant",
-            "content": message_chunk.content if hasattr(message_chunk, "content") else "",
-        }
-        
-        # 处理不同类型的消息事件
-        if isinstance(message_chunk, ToolMessage):
-            # 工具消息 - 工具调用结果
-            if hasattr(message_chunk, "tool_call_id"):
-                event_stream_message["tool_call_id"] = message_chunk.tool_call_id
-            return {
-                "type": "tool_call_result",
-                "data": event_stream_message
-            }
-        elif hasattr(message_chunk, "tool_calls") and message_chunk.tool_calls:
-            # AI消息 - 工具调用
-            event_stream_message["tool_calls"] = message_chunk.tool_calls
-            if hasattr(message_chunk, "tool_call_chunks"):
-                event_stream_message["tool_call_chunks"] = message_chunk.tool_call_chunks
-            return {
-                "type": "tool_calls",
-                "data": event_stream_message
-            }
-        elif hasattr(message_chunk, "tool_call_chunks") and message_chunk.tool_call_chunks:
-            # AI消息 - 工具调用片段
-            event_stream_message["tool_call_chunks"] = message_chunk.tool_call_chunks
-            return {
-                "type": "tool_call_chunks",
-                "data": event_stream_message
-            }
-        else:
-            # 普通消息片段
+        # 适用不同类型的消息处理
+        if hasattr(event_data, 'content'):
+            # 构建基本事件消息
+            agent_name = agent[0].split(":")[0] if agent and len(agent) > 0 else "unknown"
             return {
                 "type": "message_chunk",
-                "data": event_stream_message
+                "data": {
+                    "thread_id": thread_id,
+                    "agent": agent_name,
+                    "id": event_data.id if hasattr(event_data, "id") else str(uuid4()),
+                    "role": "assistant",
+                    "content": event_data.content
+                }
+            }
+        else:
+            # 其他类型的事件
+            return {
+                "type": "other_event",
+                "data": str(event_data)
             }
     except Exception as e:
         logger.error(f"转换事件时出错: {str(e)}")
         return {
             "type": "error",
             "data": {
-                "message": f"事件转换错误: {str(e)}"
+                "message": f"事件转换错误: {str(e)}",
+                "thread_id": thread_id,
+                "file": __file__,
+                "line": 391
             }
         }

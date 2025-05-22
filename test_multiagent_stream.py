@@ -42,7 +42,7 @@ def parse_arguments():
         "--api-url", 
         type=str, 
         # default="http://localhost:8000/api/chat/stream",
-         default="http://localhost:8000/api/v1/multiagent/stream",
+         default="http://localhost:8001/api/v1/multiagent/stream",
         help="API端点URL"
     )
     parser.add_argument(
@@ -176,7 +176,7 @@ def test_with_requests(api_url: str, request_data: Dict, verbose: bool = False):
             buffer = ""
             for chunk in response.iter_content(chunk_size=1):
                 if chunk:
-                    chunk_str = chunk.decode('utf-8')
+                    chunk_str = chunk.decode('utf-8', errors='replace')
                     buffer += chunk_str
                     
                     if buffer.endswith('\n\n'):

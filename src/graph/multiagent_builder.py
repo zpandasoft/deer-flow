@@ -30,8 +30,15 @@ def _context_analyzer_node(state: State):
     try:
         # 添加当前节点名称到状态中，用于数据库记录
         state["current_node"] = "context_analyzer"
+        # 添加显式调试日志
+        import logging
+        logger = logging.getLogger("deerflow.context_analyzer")
+        logger.info("上下文分析节点开始执行，准备调用智能体")
         # 调用上下文分析智能体
         result = context_analyzer_agent(state)
+        
+        # 日志记录结果
+        logger.info(f"上下文分析完成，下一步应该进入objective_decomposer节点")
         
         # 从数据库获取数据库服务实例
         db_service = get_db_service()
