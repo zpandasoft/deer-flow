@@ -22,7 +22,7 @@ class MySQLService:
         """建立数据库连接"""
         if self.connection is None:
             try:
-                self.logger.info(f"正在连接数据库，配置信息: {self.config}")
+#                 self.logger.info(f"正在连接数据库，配置信息: {self.config}")
                 self.connection = pymysql.connect(
                     host=self.config.get("host", "localhost"),
                     user=self.config.get("user", "root"),
@@ -31,7 +31,7 @@ class MySQLService:
                     charset="utf8mb4",
                     cursorclass=pymysql.cursors.DictCursor
                 )
-                self.logger.info("数据库连接成功")
+#                 self.logger.info("数据库连接成功")
             except Exception as e:
                 self.logger.error(f"数据库连接失败: {str(e)}")
                 raise e
@@ -153,7 +153,6 @@ class MySQLService:
                 # 执行插入
                 self.execute_insert('objectives', data)
                 objective_ids.append(objective_id)
-            
         except Exception as e:
             # 错误时回滚
             if self.connection:
@@ -613,6 +612,259 @@ class MySQLService:
             "business_constraints": []
         }
 
+    def save_research_result(self, task_id: str, llm_response: Union[str, Dict]) -> str:
+        """保存研究智能体的结果到research_results表
+        
+        Args:
+            task_id: 关联的任务ID
+            llm_response: 智能体返回的JSON字符串或字典
+            
+        Returns:
+            result_id: 保存的研究结果ID
+        """
+        # 如果输入是字符串，尝试解析为JSON
+        if isinstance(llm_response, str):
+            try:
+                research_data = json.loads(llm_response)
+            except json.JSONDecodeError:
+                # 如果不是有效的JSON，直接使用文本
+                research_data = {"text_content": llm_response}
+        else:
+            research_data = llm_response
+        
+        result_id = str(uuid.uuid4())
+        
+        # 获取数据库连接
+        self.connect()
+        
+        try:
+            # 准备数据
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 序列化研究结果
+            serialized_result = self._serialize_for_database(research_data)
+            
+            data = {
+                'result_id': result_id,
+                'task_id': task_id,
+                'research_data': serialized_result,
+                'created_at': current_time,
+                'updated_at': current_time,
+                'status': 'COMPLETED'
+            }
+            
+            # 执行插入
+            self.execute_insert('research_results', data)
+            
+        except Exception as e:
+            # 错误时回滚
+            if self.connection:
+                self.connection.rollback()
+            self.logger.error(f"保存研究结果失败: {str(e)}")
+            raise e
+        
+        return result_id
+    
+    def save_processing_result(self, category: str, llm_response: Union[str, Dict]) -> str:
+        """保存处理智能体的结果到processing_results表
+        
+        Args:
+            category: 处理结果的类别
+            llm_response: 智能体返回的JSON字符串或字典
+            
+        Returns:
+            process_id: 保存的处理结果ID
+        """
+        # 如果输入是字符串，尝试解析为JSON
+        if isinstance(llm_response, str):
+            try:
+                processing_data = json.loads(llm_response)
+            except json.JSONDecodeError:
+                # 如果不是有效的JSON，直接使用文本
+                processing_data = {"text_content": llm_response}
+        else:
+            processing_data = llm_response
+        
+        process_id = str(uuid.uuid4())
+        
+        # 获取数据库连接
+        self.connect()
+        
+        try:
+            # 准备数据
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 序列化处理结果
+            serialized_result = self._serialize_for_database(processing_data)
+            
+            data = {
+                'process_id': process_id,
+                'category': category,
+                'processing_data': serialized_result,
+                'created_at': current_time,
+                'updated_at': current_time,
+                'status': 'COMPLETED'
+            }
+            
+            # 执行插入
+            self.execute_insert('processing_results', data)
+            
+        except Exception as e:
+            # 错误时回滚
+            if self.connection:
+                self.connection.rollback()
+            self.logger.error(f"保存处理结果失败: {str(e)}")
+            raise e
+        
+        return process_id
+    
+    def save_quality_evaluation_result(self, task_id: str, llm_response: Union[str, Dict], quality_passed: bool = False) -> str:
+        """保存质量评估智能体的结果到quality_evaluations表
+        
+        Args:
+            task_id: 关联的任务ID
+            llm_response: 智能体返回的JSON字符串或字典
+            quality_passed: 质量评估是否通过
+            
+        Returns:
+            evaluation_id: 保存的评估结果ID
+        """
+        # 如果输入是字符串，尝试解析为JSON
+        if isinstance(llm_response, str):
+            try:
+                evaluation_data = json.loads(llm_response)
+            except json.JSONDecodeError:
+                # 如果不是有效的JSON，直接使用文本
+                evaluation_data = {"text_content": llm_response}
+        else:
+            evaluation_data = llm_response
+        
+        evaluation_id = str(uuid.uuid4())
+        
+        # 获取数据库连接
+        self.connect()
+        
+        try:
+            # 准备数据
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 序列化评估结果
+            serialized_result = self._serialize_for_database(evaluation_data)
+            
+            data = {
+                'evaluation_id': evaluation_id,
+                'task_id': task_id,
+                'evaluation_data': serialized_result,
+                'quality_passed': quality_passed,
+                'created_at': current_time,
+                'updated_at': current_time
+            }
+            
+            # 执行插入
+            self.execute_insert('quality_evaluations', data)
+            
+        except Exception as e:
+            # 错误时回滚
+            if self.connection:
+                self.connection.rollback()
+            self.logger.error(f"保存质量评估结果失败: {str(e)}")
+            raise e
+        
+        return evaluation_id
+    
+    def save_synthesis_result(self, llm_response: Union[str, Dict]) -> str:
+        """保存合成智能体的结果到synthesis_results表
+        
+        Args:
+            llm_response: 智能体返回的JSON字符串或字典
+            
+        Returns:
+            synthesis_id: 保存的合成结果ID
+        """
+        # 如果输入是字符串，尝试解析为JSON
+        if isinstance(llm_response, str):
+            try:
+                synthesis_data = json.loads(llm_response)
+            except json.JSONDecodeError:
+                # 如果不是有效的JSON，直接使用文本
+                synthesis_data = {"text_content": llm_response}
+        else:
+            synthesis_data = llm_response
+        
+        synthesis_id = str(uuid.uuid4())
+        
+        # 获取数据库连接
+        self.connect()
+        
+        try:
+            # 准备数据
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 序列化合成结果
+            serialized_result = self._serialize_for_database(synthesis_data)
+            
+            data = {
+                'synthesis_id': synthesis_id,
+                'synthesis_data': serialized_result,
+                'created_at': current_time,
+                'updated_at': current_time,
+                'status': 'COMPLETED'
+            }
+            
+            # 执行插入
+            self.execute_insert('synthesis_results', data)
+            
+        except Exception as e:
+            # 错误时回滚
+            if self.connection:
+                self.connection.rollback()
+            self.logger.error(f"保存合成结果失败: {str(e)}")
+            raise e
+        
+        return synthesis_id
+    
+    def save_error_log(self, error_type: str, error_message: str, error_source: str, traceback: str = "") -> str:
+        """保存错误日志到error_logs表
+        
+        Args:
+            error_type: 错误类型
+            error_message: 错误消息
+            error_source: 错误来源
+            traceback: 错误堆栈跟踪
+            
+        Returns:
+            log_id: 保存的日志ID
+        """
+        log_id = str(uuid.uuid4())
+        
+        # 获取数据库连接
+        self.connect()
+        
+        try:
+            # 准备数据
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            data = {
+                'log_id': log_id,
+                'error_type': error_type,
+                'error_message': error_message,
+                'error_source': error_source,
+                'traceback': traceback,
+                'created_at': current_time
+            }
+            
+            # 执行插入
+            self.execute_insert('error_logs', data)
+            
+        except Exception as e:
+            # 错误时回滚
+            if self.connection:
+                self.connection.rollback()
+            self.logger.error(f"保存错误日志失败: {str(e)}")
+            raise e
+        
+        return log_id
+    
     def _serialize_for_database(self, obj):
         """将对象序列化为可保存到数据库的格式
         

@@ -55,7 +55,5 @@ arxiv_search_tool = LoggedArxivSearch(
 )
 
 if __name__ == "__main__":
-    results = LoggedDuckDuckGoSearch(
-        name="web_search", max_results=SEARCH_MAX_RESULTS, output_format="list"
-    ).invoke("cute panda")
+    results = duckduckgo_search_tool.invoke("cute panda")
     print(json.dumps(results, indent=2, ensure_ascii=False))

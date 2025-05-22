@@ -381,8 +381,12 @@ async def _multiagent_stream_generator(workflow_graph, input_, config, thread_id
         ):
             # 转换事件
             event_info = await _convert_multiagent_event(agent, "event", event_data, thread_id)
+            
+            # 添加JSON序列化处理
+            serializable_event_info = _make_json_serializable(event_info)
+            
             # 生成事件字符串
-            yield f"data: {json.dumps(event_info, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(serializable_event_info, ensure_ascii=False)}\n\n"
     except Exception as e:
         error_message = str(e)
         error_traceback = traceback.format_exc()
@@ -394,6 +398,34 @@ async def _multiagent_stream_generator(workflow_graph, input_, config, thread_id
         
         # 发送错误事件
         yield f"data: {json.dumps({'type': 'error', 'data': {'message': f'工作流执行错误: {error_message}', 'thread_id': thread_id, 'file': __file__, 'line': line_number}}, ensure_ascii=False)}\n\n"
+
+def _make_json_serializable(obj):
+    """将对象转换为JSON可序列化的格式"""
+    if isinstance(obj, dict):
+        return {k: _make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_make_json_serializable(item) for item in obj]
+    elif hasattr(obj, 'to_dict') and callable(obj.to_dict):
+        return obj.to_dict()
+    elif hasattr(obj, '__dict__'):
+        # 对于具有__dict__的对象，将其转换为字典
+        return {
+            "type": obj.__class__.__name__,
+            "content": obj.content if hasattr(obj, "content") else str(obj),
+            "attributes": {k: _make_json_serializable(v) for k, v in obj.__dict__.items() 
+                        if k != 'content' and not k.startswith('_')}
+        }
+    # 处理特殊情况
+    from langchain_core.messages import AIMessage, HumanMessage
+    if isinstance(obj, (AIMessage, HumanMessage)):
+        message_dict = {
+            "type": obj.__class__.__name__,
+            "content": obj.content if hasattr(obj, "content") else "",
+        }
+        if hasattr(obj, "additional_kwargs") and obj.additional_kwargs:
+            message_dict["additional_kwargs"] = obj.additional_kwargs
+        return message_dict
+    return obj
 
 async def _convert_multiagent_event(agent, event_type, event_data, thread_id):
     """将工作流事件转换为API事件"""

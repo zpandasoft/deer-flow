@@ -7,7 +7,7 @@ from src.database.mysql_service import MySQLService
 
 # 全局数据库服务实例
 db_service = None
-logger = logging.getLogger("deerflow.decorators")
+logger = logging.getLogger("src.agents.decorators")
 
 def setup_db_service(config: Dict):
     """设置数据库服务"""
@@ -80,7 +80,7 @@ def log_llm_call(original_agent):
             logger.info(f"调用时间: {timestamp}")
             logger.info(f"节点名称: {state.get('current_node', 'unknown')}")
             logger.info(f"引用ID: {reference_id}, 类型: {reference_type}")
-            logger.debug(f"输入状态: {_truncate_for_logging(input_state)}")
+#             logger.debug(f"输入状态: {_truncate_for_logging(input_state)}")
             
             # 调用原始函数
             try:
@@ -187,7 +187,7 @@ def log_llm_call(original_agent):
             logger.info(f"调用时间: {timestamp}")
             logger.info(f"节点名称: {state.get('current_node', 'unknown')}")
             logger.info(f"引用ID: {reference_id}, 类型: {reference_type}")
-            logger.debug(f"输入状态: {_truncate_for_logging(input_state)}")
+#             logger.debug(f"输入状态: {_truncate_for_logging(input_state)}")
             
             # 调用原始函数
             try:
