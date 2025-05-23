@@ -101,7 +101,7 @@ class MySQLService:
         
         return self.execute_insert('agent_llm_calls', call_data)
         
-    def save_objective_decomposer_result(self, llm_response: Union[str, Dict]) -> List[str]:
+    def save_objective_decomposer_result(self, llm_response: Union[str, Dict],msg_id:str) -> List[str]:
         """保存目标分解智能体的结果到objectives表
         
         Args:
@@ -134,15 +134,18 @@ class MySQLService:
         
         try:
             for objective in objectives:
-                objective_id = objective.get("objective_id", str(uuid.uuid4()))
+                objective_id =  msg_id+'_'+objective.get("objective_id", str(uuid.uuid4()))
                 
                 # 准备数据
-                current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                current_time =datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 
                 data = {
+                    'msg_id': msg_id,
                     'objective_id': objective_id,
                     'title': objective.get("title", ""),
                     'description': objective.get("description", ""),
+                    'justification': objective.get("justification", ""),
+                    'evaluation_criteria': objective.get("evaluation_criteria", ""),
                     'status': objective.get("status", "CREATED"),
                     'created_at': current_time,
                     'updated_at': current_time,
@@ -192,29 +195,18 @@ class MySQLService:
         
         return objectives
         
-    def save_task_analyzer_result(self, objective_id: str, llm_response: Union[str, Dict]) -> Dict[str, List[str]]:
+    def save_task_analyzer_result(self, objective_id: str,msg_id:str, tasks: []) -> Dict[str, List[str]]:
         """保存任务分析智能体的结果到tasks和steps表
         
         Args:
             objective_id: 关联的目标ID
-            llm_response: 智能体返回的JSON字符串或字典
+            tasks: 智能体返回的数组
             
         Returns:
             ids: 包含task_ids和step_ids的字典
         """
-        # 如果输入是字符串，尝试解析为JSON
-        if isinstance(llm_response, str):
-            try:
-                result = json.loads(llm_response)
-            except json.JSONDecodeError:
-                # 如果不是有效的JSON，尝试使用正则表达式提取
-                result = self._extract_tasks_from_text(llm_response)
-        else:
-            result = llm_response
-        
+
         # 提取任务和步骤
-        tasks = result.get("tasks", [])
-        
         task_ids = []
         step_ids = []
         
@@ -229,6 +221,7 @@ class MySQLService:
                 current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 
                 task_data = {
+                    'msg_id': msg_id,
                     'task_id': task_id,
                     'objective_id': objective_id,
                     'title': task.get("title", ""),
@@ -521,7 +514,7 @@ class MySQLService:
                 self.connection.rollback()
             raise e
             
-    def save_context_analysis_result(self, objective_id: str, llm_response: Union[str, Dict]) -> str:
+    def save_context_analysis_result(self, msg_id: str, llm_response: Union[str, Dict]) -> str:
         """保存上下文分析智能体的结果到business_analyses表
         
         Args:
@@ -531,52 +524,32 @@ class MySQLService:
         Returns:
             analysis_id: 保存的分析ID
         """
-        # 如果输入是字符串，尝试解析为JSON
-        if isinstance(llm_response, str):
-            try:
-                analysis = json.loads(llm_response)
-            except json.JSONDecodeError:
-                # 如果不是有效的JSON，尝试使用正则表达式提取
-                analysis = self._extract_context_analysis_from_text(llm_response)
-        else:
-            analysis = llm_response
-        
-        analysis_id = str(uuid.uuid4())
-        
         # 获取数据库连接
         self.connect()
         
         try:
             # 处理数组字段
-            # 确保数组字段被正确序列化为JSON
-            key_business_drivers = json.dumps(analysis.get("key_business_drivers", []))
-            business_constraints = json.dumps(analysis.get("business_constraints", []))
-            relevant_regulations = json.dumps(analysis.get("relevant_regulations", []))
-            market_requirements = json.dumps(analysis.get("market_requirements", []))
-            stakeholders = json.dumps(analysis.get("stakeholders", []))
-            business_risks = json.dumps(analysis.get("business_risks", []))
-            
-            # 准备数据
             current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
+            # 提取content内容
+            content_json = None
+            if isinstance(llm_response, dict) and "messages" in llm_response:
+                messages = json.loads(llm_response["messages"])
+                for message in messages:
+                    message_obj = json.loads(message)
+                    if message_obj.get("type") == "AIMessage" and "content" in message_obj:
+                        content_json = message_obj["content"]
+                        break
+            
             data = {
-                'analysis_id': analysis_id,
-                'objective_id': objective_id,
-                'industry_type': analysis.get("industry_type", ""),
-                'business_scenario': analysis.get("scenario", ""),  # 映射scenario到business_scenario
-                'key_business_drivers': key_business_drivers,
-                'business_constraints': business_constraints,
-                'analysis_result': analysis.get("analysis_result", ""),
-                'relevant_regulations': relevant_regulations,
-                'market_requirements': market_requirements,
-                'stakeholders': stakeholders,
-                'business_risks': business_risks,
+                'msg_id': msg_id,
+                'content': content_json,  # 新增：保存content内容
+                'llm_response': json.dumps(llm_response),  # 新增：保存原始响应
                 'created_at': current_time,
-                'updated_at': current_time
             }
             
             # 执行插入
-            self.execute_insert('business_analyses', data)
+            self.execute_insert('context_analysis', data)
             
         except Exception as e:
             # 错误时回滚
@@ -584,34 +557,7 @@ class MySQLService:
                 self.connection.rollback()
             raise e
         
-        return analysis_id
-        
-    def _extract_context_analysis_from_text(self, text: str) -> Dict:
-        """从文本中提取上下文分析信息
-        
-        Args:
-            text: 文本内容
-            
-        Returns:
-            analysis: 提取的分析字典
-        """
-        # 实际使用可能需要更复杂的逻辑
-        import re
-        
-        # 提取领域
-        domain_match = re.search(r'domain["\']?\s*:\s*["\']([^"\']+)["\']', text)
-        domain = domain_match.group(1) if domain_match else ""
-        
-        # 提取场景
-        scenario_match = re.search(r'scenario["\']?\s*:\s*["\']([^"\']+)["\']', text)
-        scenario = scenario_match.group(1) if scenario_match else ""
-        
-        return {
-            "industry_type": domain,
-            "scenario": scenario,
-            "key_business_drivers": [],
-            "business_constraints": []
-        }
+        return msg_id
 
     def save_research_result(self, task_id: str, llm_response: Union[str, Dict]) -> str:
         """保存研究智能体的结果到research_results表

@@ -32,7 +32,10 @@ else:
 
 LoggedDuckDuckGoSearch = create_logged_tool(DuckDuckGoSearchResults)
 duckduckgo_search_tool = LoggedDuckDuckGoSearch(
-    name="web_search", max_results=SEARCH_MAX_RESULTS
+    name="web_search",
+    max_results=SEARCH_MAX_RESULTS,
+    backend="html",  # 使用html后端，更稳定
+    timeout=30  # 设置30秒超时
 )
 
 LoggedBraveSearch = create_logged_tool(BraveSearch)

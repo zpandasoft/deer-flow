@@ -6,7 +6,12 @@ import json
 import logging
 import re
 import traceback
+import uuid
 from typing import Dict, List, Literal
+from src.prompts.template import apply_prompt_template
+from src.llms.llm import get_llm_by_type
+from src.config.agents import AGENT_LLM_MAP
+from langchain_core.messages import AIMessage, HumanMessage
 
 # 第三方库导入
 from langgraph.graph import StateGraph, START, END
@@ -38,6 +43,31 @@ logger = logging.getLogger("graph.multiagent_builder")
 # 初始化数据库连接
 init_db_connection()
 
+# 添加通用的消息解析函数
+def _parse_messages_from_string(messages_str):
+    """解析字符串化的消息列表，提取JSON内容"""
+    try:
+        # 首先解析外层的JSON数组字符串
+        messages_list = json.loads(messages_str)
+        
+        extracted_data = []
+        for message_str in messages_list:
+            try:
+                # 解析每个消息字符串
+                message_obj = json.loads(message_str)
+                if message_obj.get("type") == "AIMessage" and "content" in message_obj:
+                    # 解析消息内容中的JSON
+                    content_json = json.loads(message_obj["content"])
+                    extracted_data.append(content_json)
+            except json.JSONDecodeError:
+                continue
+        
+        return extracted_data
+    except json.JSONDecodeError as e:
+        logger.warning(f"无法解析消息字符串: {e}")
+        return []
+
+mock_context_analyzer_agent_result={"messages": "[\"{\\\"type\\\": \\\"HumanMessage\\\", \\\"content\\\": \\\"光伏组件出口法国需要完成哪些合规目标\\\"}\", \"{\\\"type\\\": \\\"AIMessage\\\", \\\"content\\\": \\\"{\\\\n  \\\\\\\"domain\\\\\\\": {\\\\n    \\\\\\\"primary\\\\\\\": \\\\\\\"国际贸易与光伏产业\\\\\\\",\\\\n    \\\\\\\"secondary\\\\\\\": [\\\\\\\"出口合规\\\\\\\", \\\\\\\"产品认证\\\\\\\", \\\\\\\"环境法规\\\\\\\"],\\\\n    \\\\\\\"key_concepts\\\\\\\": [\\\\\\\"光伏组件\\\\\\\", \\\\\\\"法国市场准入\\\\\\\", \\\\\\\"CE认证\\\\\\\", \\\\\\\"REACH法规\\\\\\\", \\\\\\\"RoHS指令\\\\\\\"]\\\\n  },\\\\n  \\\\\\\"scenario\\\\\\\": {\\\\n    \\\\\\\"primary_scenarios\\\\\\\": [\\\\\\\"光伏组件制造商出口法国\\\\\\\", \\\\\\\"国际贸易公司拓展欧洲市场\\\\\\\"],\\\\n    \\\\\\\"use_cases\\\\\\\": [\\\\\\\"确保产品符合法国及欧盟法规要求\\\\\\\", \\\\\\\"完成必要的认证和测试\\\\\\\", \\\\\\\"满足环保及安全标准\\\\\\\"]\\\\n  },\\\\n  \\\\\\\"standards\\\\\\\": {\\\\n    \\\\\\\"regulations\\\\\\\": [\\\\\\\"欧盟CE认证\\\\\\\", \\\\\\\"RoHS指令\\\\\\\", \\\\\\\"REACH法规\\\\\\\", \\\\\\\"WEEE指令\\\\\\\"],\\\\n    \\\\\\\"best_practices\\\\\\\": [\\\\\\\"进行全面的供应链合规审查\\\\\\\", \\\\\\\"与本地认证机构合作\\\\\\\", \\\\\\\"定期更新法规知识\\\\\\\"]\\\\n  },\\\\n  \\\\\\\"knowledge_sufficiency\\\\\\\": {\\\\n    \\\\\\\"is_sufficient\\\\\\\": false,\\\\n    \\\\\\\"sufficiency_rating\\\\\\\": \\\\\\\"低\\\\\\\",\\\\n    \\\\\\\"knowledge_gaps\\\\\\\": [\\\\n      {\\\\n        \\\\\\\"topic\\\\\\\": \\\\\\\"法国市场对光伏产品的具体技术要求\\\\\\\",\\\\n        \\\\\\\"importance\\\\\\\": \\\\\\\"高\\\\\\\",\\\\n        \\\\\\\"description\\\\\\\": \\\\\\\"需要了解法国是否对光伏组件有额外的技术标准或测试要求\\\\\\\"\\\\n      },\\\\n      {\\\\n        \\\\\\\"topic\\\\\\\": \\\\\\\"最新法规更新及实施时间表\\\\\\\",\\\\n        \\\\\\\"importance\\\\\\\": \\\\\\\"中\\\\\\\",\\\\n        \\\\\\\"description\\\\\\\": \\\\\\\"需确认近期是否有新的法规调整影响出口合规\\\\\\\"\\\\n      }\\\\n    ],\\\\n    \\\\\\\"search_questions\\\\\\\": [\\\\n      {\\\\n        \\\\\\\"question\\\\\\\": \\\\\\\"法国对进口光伏组件有哪些特定的技术标准和测试要求？\\\\\\\",\\\\n        \\\\\\\"expected_information\\\\\\\": \\\\\\\"获取法国市场的详细技术规范，例如性能、安全、安装相关要求\\\\\\\",\\\\n        \\\\\\\"search_priority\\\\\\\": \\\\\\\"高\\\\\\\"\\\\n      },\\\\n      {\\\\n        \\\\\\\"question\\\\\\\": \\\\\\\"2025年欧盟针对光伏产品的法规更新有哪些？\\\\\\\",\\\\n        \\\\\\\"expected_information\\\\\\\": \\\\\\\"获取最新的法规变化，特别是CE认证、环保指令等的更新内容\\\\\\\",\\\\n        \\\\\\\"search_priority\\\\\\\": \\\\\\\"中\\\\\\\"\\\\n      }\\\\n    ]\\\\n  },\\\\n  \\\\\\\"analysis_summary\\\\\\\": \\\\\\\"光伏组件出口法国需要符合多项欧盟法规，包括CE认证、RoHS、REACH等。现有知识不足以全面回答问题，特别是在法国市场具体技术要求和最新法规动态方面存在明显缺口，建议优先进行网络搜索以补充信息。\\\\\\\"\\\\n}\\\"}\"]"};
 
 def _context_analyzer_node(state: State):
     """上下文分析节点"""
@@ -46,38 +76,37 @@ def _context_analyzer_node(state: State):
         state["current_node"] = "context_analyzer"
         # 添加显式调试日志
         logger.info("上下文分析节点开始执行，准备调用智能体")
+
+        logger.info(f"调用dify获取知识")
+        konwledg_results = "testKonwledg"
+
         
         # 使用mock版本的context_analyzer_agent
-        result = mock_context_analyzer_agent(state)
-        
+        result = mock_context_analyzer_agent_result
+        # result = context_analyzer_agent(state)
+
+        result["konwledg_results"]=konwledg_results
+
         # 日志记录结果
         logger.info(f"上下文分析完成，检查是否需要进行网络搜索")
         
         # 检查是否需要进行网络搜索
-        need_web_search = False
         search_questions = []
         
         # 从消息中提取JSON内容
         if "messages" in result:
-            for message in result["messages"]:
-                if hasattr(message, "content") and message.content:
-                    # 尝试从消息内容中提取JSON
-                    json_match = re.search(r'```json\n(.+?)\n```', message.content, re.DOTALL)
-                    if json_match:
-                        try:
-                            content_json = json.loads(json_match.group(1))
-                            # 检查是否需要网络搜索
-                            if "scenario" in content_json and content_json["scenario"].get("need_web_search", False):
-                                need_web_search = True
-                            
-                            # 提取搜索问题
-                            if "knowledge_sufficiency" in content_json and "search_questions" in content_json["knowledge_sufficiency"]:
-                                search_questions = content_json["knowledge_sufficiency"]["search_questions"]
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"无法解析消息中的JSON内容: {e}")
+            messages_str = result["messages"]
+            extracted_data_list = _parse_messages_from_string(messages_str)
+            
+            # 从提取的数据中查找search_questions
+            for content_json in extracted_data_list:
+                if "knowledge_sufficiency" in content_json and "search_questions" in content_json["knowledge_sufficiency"]:
+                    search_questions = content_json["knowledge_sufficiency"]["search_questions"]
+                    logger.info(f"成功提取search_questions，数量: {len(search_questions)}")
+                    break
         
         # 如果需要网络搜索且有搜索问题
-        if need_web_search and search_questions:
+        if search_questions:
             logger.info(f"检测到需要网络搜索，共有{len(search_questions)}个搜索问题")
             search_results = []
             
@@ -91,8 +120,8 @@ def _context_analyzer_node(state: State):
                     logger.info(f"执行搜索: {query}")
                     try:
                         # 调用网络搜索工具
-                        search_result = web_search_tool.invoke(query)
-                        # search_result = "test"
+                        # search_result = web_search_tool.invoke(query)
+                        search_result = "testsearch"
                         search_results.append({
                             "query": query,
                             "result": search_result
@@ -108,13 +137,13 @@ def _context_analyzer_node(state: State):
         
         # 从数据库获取数据库服务实例
         db_service = get_db_service()
-        
+        msg_id=str(uuid.uuid4())
+        result["msg_id"]=msg_id
         # 保存上下文分析结果到数据库
-        if "objective_id" in result and "context_analysis" in result:
-            db_service.save_context_analysis_result(
-                objective_id=result["objective_id"],
-                llm_response=result["context_analysis"]
-            )
+        db_service.save_context_analysis_result(
+            msg_id=msg_id,
+            llm_response=result
+        )
         
         logger.info(f"上下文分析节点处理完成，下一步应该进入objective_decomposer节点")
         return result
@@ -125,35 +154,7 @@ def _context_analyzer_node(state: State):
 
 
  # 使用演示数据，避免重复调用大模型
-objective_decomposer_result = {
-    "research_question": "关于'光伏组件出口法国需要完成哪些合规目标'的最新信息是什么？",
-    "decomposition_approach": "基于法规、技术标准和市场准入要求的维度，将出口合规问题分解为法律、技术和认证等层面的目标。",
-    "objectives": [
-        {
-            "objective_id": "obj-001",
-            "title": "识别并理解法国及欧盟相关法律法规",
-            "description": "明确适用于光伏组件出口至法国的欧盟和法国本地法律法规，包括环境、贸易、产品安全等方面的法律要求。",
-            "justification": "确保出口产品符合所有强制性法律条款，避免因违规导致的法律风险或罚款。",
-            "evaluation_criteria": "列出完整的适用法律法规清单，并提供每项法规的核心要求摘要。",
-            "priority": 1,
-            "dependencies": [],
-            "estimated_complexity": "高"
-        },
-        {
-            "objective_id": "obj-002",
-            "title": "获取并分析法国市场准入的技术标准",
-            "description": "研究法国市场对光伏组件的技术规范，例如性能、电气安全、耐久性等要求，以及具体的测试方法和认证流程。",
-            "justification": "技术标准是产品进入市场的基本门槛，未达标的产品将无法通过海关检查或获得销售许可。",
-            "evaluation_criteria": "整理出一份完整的技术标准清单，并附带每项标准的具体实施指南或参考文档链接。",
-            "priority": 2,
-            "dependencies": ["obj-001"],
-            "estimated_complexity": "中"
-        }
-    ],
-    "coverage_analysis": "这些目标全面覆盖了光伏组件出口法国所需的法律、技术、认证、物流及政策动态等关键领域，能够有效支持企业实现合规出口。",
-    "decomposition_rationale": "采用自上而下的系统化分解方法，从宏观法规到具体执行细节逐步展开，确保各目标既独立又互补，符合MECE原则。"
-}
-
+objective_decomposer_result = {"messages": "[\"{\\\"type\\\": \\\"HumanMessage\\\", \\\"content\\\": \\\"光伏组件出口法国需要完成哪些合规目标\\\"}\", \"{\\\"type\\\": \\\"AIMessage\\\", \\\"content\\\": \\\"{\\\\n\\\\\\\"research_question\\\\\\\": \\\\\\\"光伏组件出口法国需要完成哪些合规目标\\\\\\\",\\\\n\\\\\\\"decomposition_approach\\\\\\\": \\\\\\\"根据光伏组件出口法国的法规要求，结合欧盟及法国市场的技术标准和认证需求，将研究问题分解为环境、社会、治理三个维度的合规目标，并确保覆盖所有相关法规和认证要求。\\\\\\\",\\\\n\\\\\\\"objectives\\\\\\\": [\\\\n    {\\\\n    \\\\\\\"objective_id\\\\\\\": \\\\\\\"obj-001\\\\\\\",\\\\n    \\\\\\\"title\\\\\\\": \\\\\\\"完成CE认证以满足欧盟市场准入要求\\\\\\\",\\\\n    \\\\\\\"description\\\\\\\": \\\\\\\"确保光伏组件通过CE认证，符合欧盟关于产品安全、健康和环保的基本要求。包括进行必要的测试（如电气安全、机械性能），并编制技术文件和符合性声明。\\\\\\\",\\\\n    \\\\\\\"justification\\\\\\\": \\\\\\\"CE认证是进入法国及欧盟市场的强制性认证，未通过认证的产品无法合法销售。\\\\\\\",\\\\n    \\\\\\\"evaluation_criteria\\\\\\\": \\\\\\\"获得由认可机构颁发的CE认证证书，并确认符合最新版本的相关指令（如低电压指令LVD、电磁兼容EMC指令）。\\\\\\\",\\\\n    \\\\\\\"priority\\\\\\\": 1,\\\\n    \\\\\\\"dependencies\\\\\\\": [],\\\\n    \\\\\\\"estimated_complexity\\\\\\\": \\\\\\\"高\\\\\\\"\\\\n    },\\\\n    {\\\\n    \\\\\\\"objective_id\\\\\\\": \\\\\\\"obj-002\\\\\\\",\\\\n    \\\\\\\"title\\\\\\\": \\\\\\\"符合RoHS指令的有害物质限制要求\\\\\\\",\\\\n    \\\\\\\"description\\\\\\\": \\\\\\\"分析光伏组件中是否含有RoHS指令限制的有害物质（如铅、汞、镉等），并确保产品符合该指令规定的限值要求。\\\\\\\",\\\\n    \\\\\\\"justification\\\\\\\": \\\\\\\"RoHS指令是欧盟范围内对电子电气设备中有害物质管控的核心法规，不符合要求可能导致产品被召回或禁止销售。\\\\\\\",\\\\n    \\\\\\\"evaluation_criteria\\\\\\\": \\\\\\\"完成有害物质检测报告，并确保检测结果符合RoHS指令中规定的物质限值。\\\\\\\",\\\\n    \\\\\\\"priority\\\\\\\": 2,\\\\n    \\\\\\\"dependencies\\\\\\\": [\\\\\\\"obj-001\\\\\\\"],\\\\n    \\\\\\\"estimated_complexity\\\\\\\": \\\\\\\"中\\\\\\\"\\\\n    },\\\\n    {\\\\n    \\\\\\\"objective_id\\\\\\\": \\\\\\\"obj-003\\\\\\\",\\\\n    \\\\\\\"title\\\\\\\": \\\\\\\"遵守REACH法规的化学物质注册与管控要求\\\\\\\",\\\\n    \\\\\\\"description\\\\\\\": \\\\\\\"识别光伏组件生产过程中涉及的所有化学物质，确保其在REACH法规下完成注册，并符合相关的使用限制和通报要求。\\\\\\\",\\\\n    \\\\\\\"justification\\\\\\\": \\\\\\\"REACH法规涵盖广泛的化学品管理要求，不合规可能导致供应链中断或法律责任。\\\\\\\",\\\\n    \\\\\\\"evaluation_criteria\\\\\\\": \\\\\\\"提供完整的化学物质清单，并确认所有物质已按REACH法规完成必要注册和授权。\\\\\\\",\\\\n    \\\\\\\"priority\\\\\\\": 3,\\\\n    \\\\\\\"dependencies\\\\\\\": [\\\\\\\"obj-002\\\\\\\"],\\\\n    \\\\\\\"estimated_complexity\\\\\\\": \\\\\\\"高\\\\\\\"\\\\n    },\\\\n    {\\\\n    \\\\\\\"objective_id\\\\\\\": \\\\\\\"obj-004\\\\\\\",\\\\n    \\\\\\\"title\\\\\\\": \\\\\\\"满足WEEE指令的废弃电子产品回收要求\\\\\\\",\\\\n    \\\\\\\"description\\\\\\\": \\\\\\\"确保光伏组件设计符合WEEE指令的要求，便于产品生命周期结束后的回收和处理，同时制定相应的回收计划。\\\\\\\",\\\\n    \\\\\\\"justification\\\\\\\": \\\\\\\"WEEE指令要求生产商负责电子废弃物的回收和处理，违反可能面临处罚。\\\\\\\",\\\\n    \\\\\\\"evaluation_criteria\\\\\\\": \\\\\\\"提交符合WEEE要求的产品设计说明，并建立有效的回收管理体系。\\\\\\\",\\\\n    \\\\\\\"priority\\\\\\\": 4,\\\\n    \\\\\\\"dependencies\\\\\\\": [\\\\\\\"obj-001\\\\\\\"],\\\\n    \\\\\\\"estimated_complexity\\\\\\\": \\\\\\\"中\\\\\\\"\\\\n    },\\\\n    {\\\\n    \\\\\\\"objective_id\\\\\\\": \\\\\\\"obj-005\\\\\\\",\\\\n    \\\\\\\"title\\\\\\\": \\\\\\\"评估法国市场特定的技术标准和测试要求\\\\\\\",\\\\n    \\\\\\\"description\\\\\\\": \\\\\\\"调研法国市场是否有额外的光伏组件技术标准或测试要求，例如性能指标、安装规范等，并确保产品符合这些要求。\\\\\\\",\\\\n    \\\\\\\"justification\\\\\\\": \\\\\\\"了解法国市场的具体技术要求有助于规避潜在的合规风险。\\\\\\\",\\\\n    \\\\\\\"evaluation_criteria\\\\\\\": \\\\\\\"获取法国市场适用的技术标准清单，并通过相关测试验证产品符合性。\\\\\\\",\\\\n    \\\\\\\"priority\\\\\\\": 5,\\\\n    \\\\\\\"dependencies\\\\\\\": [\\\\\\\"obj-001\\\\\\\"],\\\\n    \\\\\\\"estimated_complexity\\\\\\\": \\\\\\\"中\\\\\\\"\\\\n    }\\\\n],\\\\n\\\\\\\"coverage_analysis\\\\\\\": \\\\\\\"上述目标全面覆盖了光伏组件出口法国所需的合规要求，包括欧盟层面的CE认证、RoHS、REACH、WEEE指令，以及法国市场的特定技术标准。每个目标均针对一个关键合规领域，且相互独立又互为补充。\\\\\\\",\\\\n\\\\\\\"decomposition_rationale\\\\\\\": \\\\\\\"采用自上而下的方法，首先识别光伏组件出口法国所需遵循的欧盟法规框架，再细化到具体的认证和测试要求，最后补充法国市场的特殊需求，确保目标体系完整且具有可操作性。\\\\\\\"\\\\n}\\\"}\"]"};
 
 def _objective_decomposer_node(state: State) :
     """目标分解节点"""
@@ -163,38 +164,36 @@ def _objective_decomposer_node(state: State) :
     # 添加显式调试日志
     logger.info("目标分解节点开始执行，准备分解研究目标")
     
-    result = objective_decomposer_agent(state)
-    # result = objective_decomposer_result
+    # result = objective_decomposer_agent(state)
+    result = objective_decomposer_result
     
     # 从AIMessage中提取JSON内容
     objectives = []
     if "messages" in result:
-        for message in result["messages"]:
-            if hasattr(message, "content") and message.content:
-                # 尝试从消息内容中提取JSON
-                try:
-                    content_json = json.loads(message.content)
-                    # 提取objectives数组
-                    if "objectives" in content_json:
-                        objectives = content_json["objectives"]
-                        logger.info(f"从AIMessage中成功提取objectives数组，长度: {len(objectives)}")
-                        break
-                except json.JSONDecodeError as e:
-                    logger.warning(f"无法解析消息中的JSON内容: {e}")
+        messages_str = result["messages"]
+        extracted_data_list = _parse_messages_from_string(messages_str)
+        
+        # 从提取的数据中查找objectives
+        for content_json in extracted_data_list:
+            if "objectives" in content_json:
+                objectives = content_json["objectives"]
+                logger.info(f"从AIMessage中成功提取objectives数组，长度: {len(objectives)}")
+                break
     
     # 如果从AIMessage中没有提取到objectives，尝试从result中直接获取
     if not objectives and "objectives" in result:
         objectives = result.get("objectives", [])
         logger.info(f"从result中直接获取objectives数组，长度: {len(objectives)}")
 
-    
+
+    msg_id=state.get("msg_id", "")
     # 获取数据库服务实例
     db_service = get_db_service()
     
     # 保存目标分解结果到数据库
     if objectives:
         logger.info(f"目标分解结果: {objectives}")
-        objective_ids = db_service.save_objective_decomposer_result(objectives)
+        objective_ids = db_service.save_objective_decomposer_result(objectives,msg_id)
     
     # 额外日志确认数据传递
     logger.info(f"离开目标分解节点，objectives列表长度: {len(objectives)}")
@@ -204,6 +203,7 @@ def _objective_decomposer_node(state: State) :
     }
 
 
+taskdata={"messages": "[\"{\\\"type\\\": \\\"HumanMessage\\\", \\\"content\\\": \\\"光伏组件出口法国需要完成哪些合规目标\\\"}\", \"{\\\"type\\\": \\\"HumanMessage\\\", \\\"content\\\": \\\"[\\\\\\\"{\\\\\\\\\\\\\\\"type\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"HumanMessage\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\"content\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"光伏组件出口法国需要完成哪些合规目标\\\\\\\\\\\\\\\"}\\\\\\\", \\\\\\\"{\\\\\\\\\\\\\\\"type\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"AIMessage\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\"content\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\n  \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"domain\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": {\\\\\\\\\\\\\\\\n    \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"primary\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"国际贸易与光伏产业\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\\n    \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"secondary\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": [\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"出口合规\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"产品认证\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"环境法规\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"],\\\\\\\\\\\\\\\\n    \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"key_concepts\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": [\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"光伏组件\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"法国市场准入\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"CE认证\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"REACH法规\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"RoHS指令\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]\\\\\\\\\\\\\\\\n  },\\\\\\\\\\\\\\\\n  \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"scenario\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": {\\\\\\\\\\\\\\\\n    \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"primary_scenarios\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": [\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"光伏组件制造商出口法国\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"国际贸易公司拓展欧洲市场\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"],\\\\\\\\\\\\\\\\n    \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"use_cases\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": [\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"确保产品符合法国及欧盟法规要求\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"完成必要的认证和测试\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"满足环保及安全标准\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]\\\\\\\\\\\\\\\\n  },\\\\\\\\\\\\\\\\n  \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"standards\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": {\\\\\\\\\\\\\\\\n    \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"regulations\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": [\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"欧盟CE认证\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"RoHS指令\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"REACH法规\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"WEEE指令\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"],\\\\\\\\\\\\\\\\n    \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"best_practices\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": [\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"进行全面的供应链合规审查\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"与本地认证机构合作\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"定期更新法规知识\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]\\\\\\\\\\\\\\\\n  },\\\\\\\\\\\\\\\\n  \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"knowledge_sufficiency\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": {\\\\\\\\\\\\\\\\n    \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"is_sufficient\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": false,\\\\\\\\\\\\\\\\n    \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"sufficiency_rating\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"低\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\\n    \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"knowledge_gaps\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": [\\\\\\\\\\\\\\\\n      {\\\\\\\\\\\\\\\\n        \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"topic\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"法国市场对光伏产品的具体技术要求\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\\n        \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"importance\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"高\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\\n        \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"description\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"需要了解法国是否对光伏组件有额外的技术标准或测试要求\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\n      },\\\\\\\\\\\\\\\\n      {\\\\\\\\\\\\\\\\n        \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"topic\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"最新法规更新及实施时间表\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\\n        \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"importance\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"中\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\\n        \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"description\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"需确认近期是否有新的法规调整影响出口合规\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\n      }\\\\\\\\\\\\\\\\n    ],\\\\\\\\\\\\\\\\n    \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"search_questions\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": [\\\\\\\\\\\\\\\\n      {\\\\\\\\\\\\\\\\n        \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"question\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"法国对进口光伏组件有哪些特定的技术标准和测试要求？\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\\n        \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"expected_information\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"获取法国市场的详细技术规范，例如性能、安全、安装相关要求\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\\n        \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"search_priority\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"高\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\n      },\\\\\\\\\\\\\\\\n      {\\\\\\\\\\\\\\\\n        \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"question\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"2025年欧盟针对光伏产品的法规更新有哪些？\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\\n        \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"expected_information\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"获取最新的法规变化，特别是CE认证、环保指令等的更新内容\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\\\\\\\\\\\\\\\\n        \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"search_priority\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"中\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\n      }\\\\\\\\\\\\\\\\n    ]\\\\\\\\\\\\\\\\n  },\\\\\\\\\\\\\\\\n  \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"analysis_summary\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"光伏组件出口法国需要符合多项欧盟法规，包括CE认证、RoHS、REACH等。现有知识不足以全面回答问题，特别是在法国市场具体技术要求和最新法规动态方面存在明显缺口，建议优先进行网络搜索以补充信息。\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\n}\\\\\\\\\\\\\\\"}\\\\\\\"]\\\"}\", \"{\\\"type\\\": \\\"AIMessage\\\", \\\"content\\\": \\\"```json\\\\n{\\\\n  \\\\\\\"objective_id\\\\\\\": \\\\\\\"export-compliance-france\\\\\\\",\\\\n  \\\\\\\"objective_title\\\\\\\": \\\\\\\"光伏组件出口法国的合规目标\\\\\\\",\\\\n  \\\\\\\"task_design_approach\\\\\\\": \\\\\\\"任务设计基于欧盟及法国市场的法规要求，重点涵盖CE认证、环保指令和其他强制性标准，确保产品符合市场准入条件。\\\\\\\",\\\\n  \\\\\\\"tasks\\\\\\\": [\\\\n    {\\\\n      \\\\\\\"task_id\\\\\\\": \\\\\\\"task-001\\\\\\\",\\\\n      \\\\\\\"title\\\\\\\": \\\\\\\"收集法国及欧盟对光伏组件的技术和法规要求\\\\\\\",\\\\n      \\\\\\\"description\\\\\\\": \\\\\\\"全面收集法国及欧盟对光伏组件出口的技术标准、法规要求及最新动态。\\\\\\\",\\\\n      \\\\\\\"priority\\\\\\\": 1,\\\\n      \\\\\\\"dependencies\\\\\\\": [],\\\\n      \\\\\\\"steps\\\\\\\": [\\\\n        {\\\\n          \\\\\\\"step_id\\\\\\\": \\\\\\\"step-001\\\\\\\",\\\\n          \\\\\\\"title\\\\\\\": \\\\\\\"搜索法国市场的技术标准和测试要求\\\\\\\",\\\\n          \\\\\\\"description\\\\\\\": \\\\\\\"查找法国是否对光伏组件有额外的技术标准、性能要求或测试流程。\\\\\\\",\\\\n          \\\\\\\"step_type\\\\\\\": \\\\\\\"RESEARCH\\\\\\\",\\\\n          \\\\\\\"need_web_search\\\\\\\": true,\\\\n          \\\\\\\"timeout_seconds\\\\\\\": 600,\\\\n          \\\\\\\"expected_output\\\\\\\": \\\\\\\"详细列出法国对光伏组件的技术规范，包括性能、安全性和安装相关要求。\\\\\\\",\\\\n          \\\\\\\"completion_criteria\\\\\\\": \\\\\\\"明确法国市场的具体技术标准，并确认是否有超出欧盟通用要求的部分。\\\\\\\",\\\\n          \\\\\\\"evaluation_metrics\\\\\\\": [\\\\\\\"技术标准覆盖范围\\\\\\\", \\\\\\\"信息来源可靠性\\\\\\\"]\\\\n        },\\\\n        {\\\\n          \\\\\\\"step_id\\\\\\\": \\\\\\\"step-002\\\\\\\",\\\\n          \\\\\\\"title\\\\\\\": \\\\\\\"获取2025年欧盟针对光伏产品的法规更新\\\\\\\",\\\\n          \\\\\\\"description\\\\\\\": \\\\\\\"查找2025年欧盟在光伏产品领域的法规变化，特别是CE认证、RoHS、REACH等指令的更新内容。\\\\\\\",\\\\n          \\\\\\\"step_type\\\\\\\": \\\\\\\"RESEARCH\\\\\\\",\\\\n          \\\\\\\"need_web_search\\\\\\\": true,\\\\n          \\\\\\\"timeout_seconds\\\\\\\": 600,\\\\n          \\\\\\\"expected_output\\\\\\\": \\\\\\\"汇总2025年欧盟法规更新清单及其实施时间表。\\\\\\\",\\\\n          \\\\\\\"completion_criteria\\\\\\\": \\\\\\\"清晰记录法规调整的具体内容及其对光伏组件出口的影响。\\\\\\\",\\\\n          \\\\\\\"evaluation_metrics\\\\\\\": [\\\\\\\"法规更新完整性\\\\\\\", \\\\\\\"时间表准确性\\\\\\\"]\\\\n        }\\\\n      ]\\\\n    },\\\\n    {\\\\n      \\\\\\\"task_id\\\\\\\": \\\\\\\"task-002\\\\\\\",\\\\n      \\\\\\\"title\\\\\\\": \\\\\\\"分析合规要求并制定行动计划\\\\\\\",\\\\n      \\\\\\\"description\\\\\\\": \\\\\\\"基于收集到的信息，分析光伏组件出口法国需要满足的合规要求，并制定详细的行动计划。\\\\\\\",\\\\n      \\\\\\\"priority\\\\\\\": 2,\\\\n      \\\\\\\"dependencies\\\\\\\": [\\\\\\\"task-001\\\\\\\"],\\\\n      \\\\\\\"steps\\\\\\\": [\\\\n        {\\\\n          \\\\\\\"step_id\\\\\\\": \\\\\\\"step-003\\\\\\\",\\\\n          \\\\\\\"title\\\\\\\": \\\\\\\"分析法国市场技术标准与欧盟法规的关系\\\\\\\",\\\\n          \\\\\\\"description\\\\\\\": \\\\\\\"解读法国市场的技术要求是否与欧盟通用法规一致，识别差异点。\\\\\\\",\\\\n          \\\\\\\"step_type\\\\\\\": \\\\\\\"PROCESSING\\\\\\\",\\\\n          \\\\\\\"need_web_search\\\\\\\": false,\\\\n          \\\\\\\"timeout_seconds\\\\\\\": 300,\\\\n          \\\\\\\"expected_output\\\\\\\": \\\\\\\"形成一份对比报告，说明法国市场技术标准与欧盟法规的一致性或差异化部分。\\\\\\\",\\\\n          \\\\\\\"completion_criteria\\\\\\\": \\\\\\\"明确法国市场是否有额外的技术要求，并提出应对建议。\\\\\\\",\\\\n          \\\\\\\"evaluation_metrics\\\\\\\": [\\\\\\\"分析深度\\\\\\\", \\\\\\\"建议可行性\\\\\\\"]\\\\n        },\\\\n        {\\\\n          \\\\\\\"step_id\\\\\\\": \\\\\\\"step-004\\\\\\\",\\\\n          \\\\\\\"title\\\\\\\": \\\\\\\"评估法规更新对出口策略的影响\\\\\\\",\\\\n          \\\\\\\"description\\\\\\\": \\\\\\\"分析2025年法规更新对光伏组件出口法国的潜在影响，并提出相应的合规优化方案。\\\\\\\",\\\\n          \\\\\\\"step_type\\\\\\\": \\\\\\\"PROCESSING\\\\\\\",\\\\n          \\\\\\\"need_web_search\\\\\\\": false,\\\\n          \\\\\\\"timeout_seconds\\\\\\\": 300,\\\\n          \\\\\\\"expected_output\\\\\\\": \\\\\\\"提供一份法规影响评估报告及应对措施清单。\\\\\\\",\\\\n          \\\\\\\"completion_criteria\\\\\\\": \\\\\\\"清晰描述法规变化对出口业务的影响，并给出可操作的改进建议。\\\\\\\",\\\\n          \\\\\\\"evaluation_metrics\\\\\\\": [\\\\\\\"影响评估准确性\\\\\\\", \\\\\\\"措施可操作性\\\\\\\"]\\\\n        }\\\\n      ]\\\\n    },\\\\n    {\\\\n      \\\\\\\"task_id\\\\\\\": \\\\\\\"task-003\\\\\\\",\\\\n      \\\\\\\"title\\\\\\\": \\\\\\\"综合形成合规指南\\\\\\\",\\\\n      \\\\\\\"description\\\\\\\": \\\\\\\"整合分析结果，输出一份完整的光伏组件出口法国的合规指南。\\\\\\\",\\\\n      \\\\\\\"priority\\\\\\\": 3,\\\\n      \\\\\\\"dependencies\\\\\\\": [\\\\\\\"task-002\\\\\\\"],\\\\n      \\\\\\\"steps\\\\\\\": [\\\\n        {\\\\n          \\\\\\\"step_id\\\\\\\": \\\\\\\"step-005\\\\\\\",\\\\n          \\\\\\\"title\\\\\\\": \\\\\\\"撰写光伏组件出口法国的合规指南\\\\\\\",\\\\n          \\\\\\\"description\\\\\\\": \\\\\\\"将技术标准、法规要求及应对措施整合成一份结构化的合规指南。\\\\\\\",\\\\n          \\\\\\\"step_type\\\\\\\": \\\\\\\"PROCESSING\\\\\\\",\\\\n          \\\\\\\"need_web_search\\\\\\\": false,\\\\n          \\\\\\\"timeout_seconds\\\\\\\": 480,\\\\n          \\\\\\\"expected_output\\\\\\\": \\\\\\\"一份包含技术要求、法规清单及实施建议的完整合规指南。\\\\\\\",\\\\n          \\\\\\\"completion_criteria\\\\\\\": \\\\\\\"指南内容应全面覆盖研究目标，逻辑清晰且易于操作。\\\\\\\",\\\\n          \\\\\\\"evaluation_metrics\\\\\\\": [\\\\\\\"内容完整性\\\\\\\", \\\\\\\"结构逻辑性\\\\\\\"]\\\\n        }\\\\n      ]\\\\n    }\\\\n  ],\\\\n  \\\\\\\"design_rationale\\\\\\\": \\\\\\\"任务设计遵循'收集-分析-综合'模式，首先通过网络搜索获取法国市场及欧盟法规的最新要求，然后分析其对出口业务的影响，最后整合为一份可操作的合规指南。\\\\\\\"\\\\n}\\\\n```\\\"}\"]"}
 def _task_analyzer_node(state: State):
     """任务分析节点"""
     # 添加当前节点名称到状态中，用于数据库记录
@@ -211,6 +211,7 @@ def _task_analyzer_node(state: State):
     # 添加显式调试日志
     logger.info(f"任务分析节点开始执行，准备分析目标任务")
     objectives = state.get("objectives", [])
+    msg_id=state.get("msg_id", "")
     # 初始化结果集合
     combined_tasks = []
     combined_task_ids = []
@@ -240,31 +241,72 @@ def _task_analyzer_node(state: State):
     logger.info(f"共需处理 {len(objectives)} 个目标")
     for index, objective in enumerate(objectives):
         objective_id = objective.get("objective_id")
-        
+        objective_title= objective.get("title")
         # 检查目标ID是否有效
         if not objective_id:
             logger.warning(f"目标 #{index+1} 没有有效的objective_id，将使用索引作为ID")
             objective_id = f"obj-{index+1}"
             objective["objective_id"] = objective_id
         
-        logger.info(f"处理第 {index+1}/{len(objectives)} 个目标: {objective_id}")
-        
-        # 创建包含当前目标的子状态
-        objective_state = {
-            **state,
-            "current_objective": objective,
-            "objective_id": objective_id
+        logger.info(f"处理第 {index+1}/{len(objectives)} 个目标: {objective_title}")
+
+        input_ = {
+            "messages": [
+                HumanMessage(
+                    f"#  研究目标: {objective_title}\n\n"
+                )
+            ],
+            "locale": state.get("locale", "en-US"),
         }
-        
+        invoke_messages = apply_prompt_template("task_analyzer", input_)
+        search_results = state.get("search_results", [])
+        for search_result in search_results:
+            invoke_messages.append(
+                HumanMessage(
+                    content=f"Below are some searchdatas for the research task:\n\n{search_result}",
+                    name="observation",
+                )
+            )
+
         # 调用任务分析智能体
-        result = task_analyzer_agent(objective_state)
+        # result = task_analyzer_agent(invoke_messages)
+        result= taskdata
+        # result = get_llm_by_type(AGENT_LLM_MAP["task_analyzer"]).invoke(invoke_messages)
         
         # 保存任务分析结果到数据库
-        if "objective_id" in result and "tasks" in result:
-            logger.info(f"任务分析结果: {result['tasks']}")
+        tasks = []
+        if "messages" in result:
+            messages_str = result["messages"]
+            try:
+                # 解析消息字符串
+                messages_list = json.loads(messages_str)
+                for message_str in messages_list:
+                    message_obj = json.loads(message_str)
+                    if message_obj.get("type") == "AIMessage" and "content" in message_obj:
+                        # 尝试解析content字段
+                        try:
+                            content_str = message_obj["content"]
+                            # 如果content是JSON字符串（以```json开头），需要提取JSON部分
+                            if content_str.startswith("```json") and content_str.endswith("```"):
+                                content_str = content_str[7:-3].strip()
+                            content_json = json.loads(content_str)
+                            if "tasks" in content_json:
+                                tasks = content_json["tasks"]
+                                logger.info(f"从taskdata中成功提取tasks数组，长度: {len(tasks)}")
+                                break
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"解析消息content时出错: {e}")
+                            continue
+            except json.JSONDecodeError as e:
+                logger.error(f"解析messages字符串时出错: {e}")
+                logger.debug(f"原始messages字符串: {messages_str}")
+
+
+        if  tasks:
             task_results = db_service.save_task_analyzer_result(
-                objective_id=result["objective_id"],
-                llm_response=result["tasks"]
+                objective_id=objective_id,
+                msg_id=msg_id,
+                tasks=tasks
             )
             # 收集任务和ID信息
             if task_results:
@@ -274,12 +316,10 @@ def _task_analyzer_node(state: State):
                 combined_step_ids.extend(step_ids)
             
             # 收集任务
-            if "tasks" in result:
-                tasks = result["tasks"]
-                if isinstance(tasks, list):
-                    combined_tasks.extend(tasks)
-                else:
-                    combined_tasks.append(tasks)
+            if isinstance(tasks, list):
+                combined_tasks.extend(tasks)
+            else:
+                combined_tasks.append(tasks)
             
             # 将当前目标的完整结果存储起来
             all_results[objective_id] = result
@@ -950,22 +990,24 @@ def _build_multiagent_graph():
     builder.add_node("context_analyzer", _context_analyzer_node)
     builder.add_node("objective_decomposer", (_objective_decomposer_node))
     builder.add_node("task_analyzer", (_task_analyzer_node))
-    builder.add_node("sufficiency_evaluator", _wrap_node_with_error_handling(_sufficiency_evaluator_node))
-    builder.add_node("research_agent", _wrap_node_with_error_handling(_research_agent_node))
-    builder.add_node("processing_agent", _wrap_node_with_error_handling(_process_research_results))
-    builder.add_node("quality_evaluator", _wrap_node_with_error_handling(_quality_evaluator_node))
-    builder.add_node("synthesis_agent", _wrap_node_with_error_handling(_synthesis_agent_node))
+    # builder.add_node("sufficiency_evaluator", _wrap_node_with_error_handling(_sufficiency_evaluator_node))
+    # builder.add_node("research_agent", _wrap_node_with_error_handling(_research_agent_node))
+    # builder.add_node("processing_agent", _wrap_node_with_error_handling(_process_research_results))
+    # builder.add_node("quality_evaluator", _wrap_node_with_error_handling(_quality_evaluator_node))
+    # builder.add_node("synthesis_agent", _wrap_node_with_error_handling(_synthesis_agent_node))
     # builder.add_node("error_handler", _error_handler_node)  # 错误处理节点不需要包装
-    builder.add_node("human_interaction", _wrap_node_with_error_handling(_human_interaction_node))
-    builder.add_node("user_feedback", _wrap_node_with_error_handling(_user_feedback_node))
-    builder.add_node("handle_feedback", _wrap_node_with_error_handling(_handle_user_feedback))
+    # builder.add_node("human_interaction", _wrap_node_with_error_handling(_human_interaction_node))
+    # builder.add_node("user_feedback", _wrap_node_with_error_handling(_user_feedback_node))
+    # builder.add_node("handle_feedback", _wrap_node_with_error_handling(_handle_user_feedback))
     
     # 添加边 - 主工作流程
     # 初始节点连接到上下文分析
     builder.add_edge(START, "context_analyzer")
     builder.add_edge("context_analyzer", "objective_decomposer")
     builder.add_edge("objective_decomposer", "task_analyzer")
-    builder.add_edge("task_analyzer", "sufficiency_evaluator")
+    builder.add_edge("task_analyzer", END)
+
+    # builder.add_edge("task_analyzer", "sufficiency_evaluator")
     
     # 添加条件边：充分性评估决定下一步
     # builder.add_conditional_edges(
@@ -998,27 +1040,27 @@ def _build_multiagent_graph():
     #     }
     # )
     
-    builder.add_edge("sufficiency_evaluator", "processing_agent")
+    # builder.add_edge("sufficiency_evaluator", "processing_agent")
 
     # 处理阶段到合成阶段
-    builder.add_edge("processing_agent", "synthesis_agent")
+    # builder.add_edge("processing_agent", "synthesis_agent")
     
     # 合成阶段到用户反馈
-    builder.add_edge("synthesis_agent", "user_feedback")
+    # builder.add_edge("synthesis_agent", "user_feedback")
     
     # 用户反馈处理
-    builder.add_conditional_edges(
-        "user_feedback",
-        _evaluate_user_feedback,
-        {
-            "reanalyze": "context_analyzer",  # 如果用户提出新问题，重新开始分析
-            "modify": "handle_feedback",      # 如果用户要求修改，处理反馈
-            "continue": END                   # 如果用户满意，结束流程
-        }
-    )
+    # builder.add_conditional_edges(
+    #     "user_feedback",
+    #     _evaluate_user_feedback,
+    #     {
+    #         "reanalyze": "context_analyzer",  # 如果用户提出新问题，重新开始分析
+    #         "modify": "handle_feedback",      # 如果用户要求修改，处理反馈
+    #         "continue": END                   # 如果用户满意，结束流程
+    #     }
+    # )
     
     # 处理用户反馈后的路径
-    builder.add_edge("handle_feedback", "research_agent")  # 处理反馈后重新研究
+    # builder.add_edge("handle_feedback", "research_agent")  # 处理反馈后重新研究
     
     # 错误处理路径 - 条件路由
     # 为所有节点添加错误处理条件边
@@ -1060,7 +1102,7 @@ def _build_multiagent_graph():
     # )
     
     # 人机交互后回到上下文分析
-    builder.add_edge("human_interaction", "context_analyzer")
+    # builder.add_edge("human_interaction", "context_analyzer")
     
     return builder
 

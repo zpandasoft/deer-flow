@@ -4,7 +4,8 @@
 -- 创建上下文分析结果表
 CREATE TABLE IF NOT EXISTS `context_analysis` (
   `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `objective_id` varchar(100) NOT NULL COMMENT '目标ID',
+  `msg_id` varchar(100) NOT NULL COMMENT '',
+  `content` varchar(100) NOT NULL COMMENT '',
   `llm_response` text NOT NULL COMMENT 'LLM响应内容',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   PRIMARY KEY (`id`),
@@ -16,7 +17,9 @@ CREATE TABLE IF NOT EXISTS `objectives` (
   `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '主键',
   `objective_id` varchar(100) NOT NULL COMMENT '目标ID',
   `title` varchar(255) NOT NULL COMMENT '目标标题',
-  `description` text NOT NULL COMMENT '目标描述',
+  `description` text NOT NULL COMMENT '目标描述', 
+  `justification` text NOT NULL COMMENT '目标理由',
+  `evaluation_criteria` text NOT NULL COMMENT '目标评估标准',
   `status` varchar(50) NOT NULL DEFAULT 'CREATED' COMMENT '目标状态',
   `parent_id` varchar(100) DEFAULT NULL COMMENT '父目标ID',
   `retry_count` int(11) NOT NULL DEFAULT 0 COMMENT '重试次数',

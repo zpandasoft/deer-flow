@@ -20,7 +20,7 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 
 1. **收集阶段** (通常是RESEARCH步骤)
 - 每个任务应该以信息收集步骤开始
-- 明确指定要收集的信息类型和来源
+- 明确指定要收集的信息类型、来源和字段类型
 - 设置网络搜索标志(need_web_search=true)
 - 明确收集的完成标准和充分性要求
 
@@ -56,7 +56,7 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 
 # 输出格式
 
-请提供JSON格式的任务和步骤设计，确保符合以下结构：
+请提供JSON格式的任务和步骤设计，确保符合以下结构,不要显示```json以及```：
 
 ```json
 {
@@ -107,8 +107,8 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 # 执行指南
 
 1. 仔细阅读研究目标和上下文信息
-2. 根据目标特点，设计2-4个主要任务
-3. 为每个任务设计3-5个步骤，确保遵循"收集-分析-综合"模式
+2. 根据目标内容，依据相关法律法规以及案例，分析完成该目标所需要完成的所有步骤
+3. 根据法律法规以及案例检查步骤是否完整
 4. 明确区分RESEARCH和PROCESSING步骤类型
 5. 为RESEARCH步骤设置need_web_search=true，为PROCESSING步骤设置need_web_search=false
 6. 设置合理的超时时间，通常RESEARCH步骤需要更长时间

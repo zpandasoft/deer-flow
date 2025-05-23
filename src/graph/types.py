@@ -38,3 +38,4 @@ class State(MessagesState):
     processing_complete: bool = False
     all_processed_results: [] 
     quality_passed: bool = False
+    msg_id: str = None
